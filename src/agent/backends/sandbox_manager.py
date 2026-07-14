@@ -152,7 +152,10 @@ async def ensure_sandbox_for_user(user_id: str) -> SandboxBackendProxy:
             )
             logger.info("用户 %s 认领预热沙箱: %s", user_id, sandbox_id)
             # 后台补充预热沙箱（被认领后异步触发）
-            asyncio.create_task(_replenish_warm())
+            try:
+                asyncio.create_task(_replenish_warm())
+            except Exception as e:
+                logger.error("创建预热沙箱任务失败: %s", e)
             return proxy
 
     # 状态 2: MongoDB 重连
