@@ -99,13 +99,18 @@ async def pre_warm() -> None:
 
 async def ensure_sandbox_for_user(user_id: str) -> SandboxBackendProxy:
     """
-    获取或创建某个用户的沙箱
+    获取或创建某个用户的沙箱。
 
-     状态机流程:
-        0. _warm_reserve 有货 → 认领分配给 user
-        1. 内存缓存命中 → ping 健康检查 → 失败则重建
-        2. MongoDB 有 sandbox_id → connect(id) → 失败则重建
-        3. 无任何记录 → 创建新沙箱
+    状态机流程（按优先级顺序）:
+    0. 预热沙箱可用 → 直接认领分配给用户（零等待）
+    1. 内存缓存命中 → ping 健康检查 → 可达则直接返回，失败则重建
+    2. MongoDB 有记录 → 尝试重连已有沙箱 → 失败则重建
+    3. 无任何记录 → 创建新沙箱
+
+    为什么分 3 层缓存?
+    - 预热沙箱：消除首个用户的冷启动延迟
+    - 内存缓存：同一用户的多次请求无需查库/重连
+    - MongoDB 持久化：服务重启后仍可恢复用户沙箱
 
     Args:
         user_id: 用户唯一标识符。
@@ -154,26 +159,30 @@ async def ensure_sandbox_for_user(user_id: str) -> SandboxBackendProxy:
     doc = _sandbox_collection().find_one({"user_id": user_id})
     if doc and doc.get("sandbox_id"):
         sandbox_id = doc["sandbox_id"]
-        logger.info("用户 %s 尝试重连沙箱： %s", user_id, sandbox_id)
+        logger.info("用户 %s 尝试重连沙箱: %s", user_id, sandbox_id)
+
+        # 尝试连接 MongoDB 中记录的已有沙箱
+        from agent.backends.sandbox_setup import setup_sandbox
         try:
-            from agent.backends.sandbox_setup import setup_sandbox
-            await asyncio.to_thread(
+            # setup_sandbox 返回的是 OpenSandboxBackend 实例
+            reconnected_backend = await asyncio.to_thread(
                 setup_sandbox, SANDBOX_CONFIG, sandbox_id=sandbox_id
             )
         except Exception:
             logger.warning("用户 %s 的沙箱 %s 重连失败，将重新创建", user_id, sandbox_id)
-            #  重建沙箱
+            # 重连失败，创建新沙箱
             return await _create_sandbox_for_user(user_id)
 
+        # 验证���连的沙箱是否可达
         try:
-            await asyncio.to_thread(setup_sandbox.execute, proxy.id, "echo ok")
+            reconnected_backend.execute("echo ok")
         except Exception:
             logger.warning("已连接的沙箱 %s 不可达，创建新沙箱", sandbox_id)
-
-            #  重建沙箱（原沙箱不可达时）
+            # 沙箱不可达，标记重建（原沙箱 ID 会由 _recreate_sandbox 尝试删除）
             return await _recreate_sandbox(user_id, None)
 
-        proxy = SandboxBackendProxy(setup_sandbox)
+        # 重连成功，包装为 Proxy 并缓存
+        proxy = SandboxBackendProxy(reconnected_backend)
         SANDBOX_BACKENDS[user_id] = proxy
         _sandbox_collection().update_one(
             {"user_id": user_id},
@@ -297,7 +306,8 @@ async def _create_sandbox_for_user(user_id: str) -> SandboxBackendProxy:
     sandbox_backend = await asyncio.to_thread(setup_sandbox, SANDBOX_CONFIG)
     sandbox_id = sandbox_backend.id
 
-    proxy = SandboxBackendProxy(setup_sandbox)
+    # 创建 Proxy 并缓存到内存
+    proxy = SandboxBackendProxy(sandbox_backend)
     SANDBOX_BACKENDS[user_id] = proxy
 
     _sandbox_collection().update_one(
@@ -369,20 +379,25 @@ async def _replenish_warm() -> None:
     """
     后台补充预热沙箱（被认领后异步触发）
 
-      当预热沙箱被第一个用户认领后，在后台异步创建一个新的预热沙箱，
+    当预热沙箱被第一个用户认领后，在后台异步创建一个新的预热沙箱，
     以便后续用户也能享受零等待的冷启动体验。
     如果当前已有预热沙箱则直接返回。
     """
-
     global _warm_reserve
+
+    # 已有预热沙箱，无需补充
     if _warm_reserve is not None:
         return
 
     try:
         from agent.backends.sandbox_setup import setup_sandbox
+
+        # 创建新的预热沙箱
         sandbox_backend = await asyncio.to_thread(setup_sandbox, SANDBOX_CONFIG)
+
         async with _warm_lock:
-            if _warm_reserve is not None:
+            # 双重检查：获取锁后再次确认仍为空（防止并发）
+            if _warm_reserve is None:
                 _warm_reserve = SandboxBackendProxy(sandbox_backend)
                 logger.info("后台补充预热沙箱就绪: %s", sandbox_backend.id)
     except Exception:

@@ -1,4 +1,5 @@
 from datetime import timedelta
+from pathlib import Path
 
 import httpx
 from langchain.chat_models import init_chat_model
@@ -8,7 +9,7 @@ from langgraph.store.memory import InMemoryStore
 from opensandbox.config import ConnectionConfigSync
 from pymongo import MongoClient
 
-from agent.env_utils import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, GLM_BASE_URL, GLM_API_KEY, QWEN_BASE_URL, QWEN_API_KEY, REDIS_DATABASE_URL
+from agent.env_utils import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, GLM_BASE_URL, GLM_API_KEY, QWEN_BASE_URL, QWEN_API_KEY
 
 # =============================================================================
 # ★ 1. 模型配置 —— 主模型、摘要模型、备用模型
@@ -30,11 +31,11 @@ MAIN_MODEL = init_chat_model(
 
 # ★ 摘要专用模型（摘要需要稳定输出，temperature 设为较低值）
 SUMMARY_MODEL = ChatOpenAI(
-    model="deepseek-v4-flash",
+    model="DeepSeek-V4-Flash",
     temperature=0.3,
     openai_api_key=DEEPSEEK_API_KEY,
     openai_api_base=DEEPSEEK_BASE_URL,
-    max_tokens=2560000,
+    max_tokens=256000,  # 256k tokens，上下文窗口的 2 倍
     model_kwargs={
         "extra_body": {
             "thinking": {"type": "disabled"}
@@ -60,7 +61,6 @@ FALLBACK_MODEL = init_chat_model(
 # =============================================================================
 # ★ 2. 沙箱配置 —— OpenSandbox 连接配置
 # =============================================================================
-# OpenSandbox 沙箱配置连接
 SANDBOX_CONFIG = ConnectionConfigSync(
     domain="http://192.168.0.188:8080",
     use_server_proxy=True,
@@ -71,6 +71,8 @@ SANDBOX_CONFIG = ConnectionConfigSync(
 # =============================================================================
 # ★ 3. 路径常量 —— 项目路径、沙箱路径、本地路径
 # =============================================================================
+# ★ 项目 src 根目录（所有本地路径常量的基路径）
+EXAMPLE_DIR = Path(__file__).resolve().parent.parent
 # ★ 沙箱内技能根路径
 SANDBOX_SKILLS_ROOT = "/skills"
 # ★ 沙箱内记忆根路径（用户私有记忆存放处）
@@ -87,6 +89,31 @@ DOWNLOAD_DIR = EXAMPLE_DIR / "download"
 LOCAL_SUBAGENT_CONFIG_DIR = EXAMPLE_DIR / "agent/subagents"
 # ★ 本地的Agent记忆文件
 LOCAL_AGENTS_MD = EXAMPLE_DIR / "agent/memory/AGENTS.md"
+
+
+# =============================================================================
+# ★ 4. 文件名常量 —— 沙箱内文件名、用户偏好文件名
+# =============================================================================
+
+# ★ 主 Agent 只读指引文件（上传到沙箱 /AGENTS.md）
+AGENTS_MD_FILENAME = "/AGENTS.md"
+# ★ 用户偏好文件名（在 /memories/{user_id}/ 下）
+USER_PREFERENCES_FILENAME = "preferences.md"
+
+# =============================================================================
+# ★ 5. 用户技能持久化 —— 技能路径映射、子Agent名称映射
+# =============================================================================
+
+# ★ 技能持久化 StoreBackend 路由路径
+PERSISTED_SKILLS_ROOT = "/persisted-skills"
+# ★ 技能 StoreBackend 命名空间（按 Agent scope 组织，无用户隔离）
+SKILLS_STORE_NAMESPACE = ("skills",)
+# ★ 子 Agent 名称 → 技能 scope 目录映射
+SCOPE_MAP = {
+    "main": "main",
+    "procurement-analyst": "procurement",
+    "procurement-order": "order",
+}
 
 
 # =============================================================================

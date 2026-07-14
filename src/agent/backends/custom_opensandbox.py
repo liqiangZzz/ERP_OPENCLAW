@@ -17,6 +17,7 @@
     result = backend.execute("pip install numpy")
 """
 from __future__ import annotations
+import asyncio
 import logging
 from collections.abc import Callable
 from typing import cast
@@ -106,3 +107,127 @@ class OpenSandboxBackend(BaseSandbox):
         sandbox_id = self._sandbox.id
         logger.debug(f"获取沙盒 ID: {sandbox_id}")
         return sandbox_id
+
+    # =============================================================================
+    # ★ 4. 核心方法实现：execute / upload / download
+    # =============================================================================
+    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        """
+        执行 Shell 命令（同步）。
+
+        封装 OpenSandbox SDK 的 run 方法，处理超时和错误转换。
+        自动注入 SANDBOX_PATH 环境变量，确保非交互式 shell 能找到 pip/python。
+
+        Args:
+            command: 要执行的 shell 命令。
+            timeout: 超时时间（秒），默认使用 self.default_timeout。
+
+        Returns:
+            ExecuteResponse: 包含 exit_code、output 等字段。
+        """
+        timeout = timeout or self.default_timeout
+        logger.debug(f"执行命令: {command[:100]}...")
+
+        # 执行命令，返回 ExecuteResponse
+        try:
+            # OpenSandbox SDK 的 run 方法返回结果
+            result = self._sandbox.run(command, timeout=timeout)
+
+            return ExecuteResponse(
+                exit_code=result.exit_code or 0,
+                output=result.output or "",
+                error=result.error,
+            )
+        except Exception as e:
+            logger.error(f"命令执行失败: {e}")
+            return ExecuteResponse(
+                exit_code=-1,
+                output="",
+                error=str(e),
+            )
+
+    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        """
+        执行 Shell 命令（异步）。
+
+        通过 asyncio.to_thread 将同步调用转为异步，避免阻塞事件循环。
+
+        Args:
+            command: 要执行的 shell 命令。
+            timeout: 超时时间（秒）。
+
+        Returns:
+            ExecuteResponse: 执行结果。
+        """
+        return await asyncio.to_thread(self.execute, command, timeout=timeout)
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        """
+        上传文件到沙箱（同步）。
+
+        将 (沙箱路径, 文件内容字节) 元组列表批量上传到沙箱。
+
+        Args:
+            files: [(sandbox_path, content), ...] 格式的列表。
+
+        Returns:
+            list[FileUploadResponse]: 每个文件的 upload 结果。
+        """
+        results = []
+        for path, content in files:
+            try:
+                # OpenSandbox SDK 的 write 方法
+                write_entry = WriteEntry(path=path, content=content)
+                self._sandbox.write(write_entry)
+                results.append(FileUploadResponse(
+                    path=path,
+                    success=True,
+                    error=None,
+                ))
+            except Exception as e:
+                logger.warning(f"文件上传失败 {path}: {e}")
+                results.append(FileUploadResponse(
+                    path=path,
+                    success=False,
+                    error=str(e),
+                ))
+        return results
+
+    async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        """上传文件到沙箱（异步）。"""
+        return await asyncio.to_thread(self.upload_files, files)
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        """
+        从沙箱下载文件（同步）。
+
+        批量下载沙箱中的文件到本地。
+
+        Args:
+            paths: 要下载的沙箱文件路径列表。
+
+        Returns:
+            list[FileDownloadResponse]: 每个文件的 download 结果。
+        """
+        results = []
+        for path in paths:
+            try:
+                # OpenSandbox SDK 的 read 方法
+                content = self._sandbox.read(path)
+                results.append(FileDownloadResponse(
+                    path=path,
+                    content=content,
+                    error=None,
+                ))
+            except Exception as e:
+                logger.warning(f"文件下载失败 {path}: {e}")
+                results.append(FileDownloadResponse(
+                    path=path,
+                    content=None,
+                    error=str(e),
+                ))
+        return results
+
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        """从沙箱下载文件（异步）。"""
+        return await asyncio.to_thread(self.download_files, paths)
