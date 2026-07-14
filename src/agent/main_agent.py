@@ -35,8 +35,8 @@ from langchain_core.runnables import RunnableConfig
 
 from agent.config import SKILLS_STORE_NAMESPACE, LOCAL_AGENTS_MD, STORE, DOWNLOAD_DIR, SUMMARY_MODEL, MAIN_MODEL, \
     AGENTS_MD_FILENAME, CHECKPOINTER
-from agent.tools.mcp_client import load_mcp_tools
 from agent.memory.prompts import system_prompt
+from agent.middleware_config import create_analyst_middleware, create_order_middleware
 from agent.middlewares.context_injection import ContextInjectionMiddleware
 from agent.middlewares.memory_update import MemoryUpdateMiddleware
 from agent.middlewares.sandbox_breaker import SandboxCircuitBreakerMiddleware
@@ -51,7 +51,7 @@ from agent.tools.assign_skill import create_assign_skill_tool
 from agent.tools.chart_generator import create_generate_chart_tool
 from agent.tools.download_sandbox_file import create_download_tool
 from agent.tools.hitl_tools import request_order_info
-from agent.middleware_config import create_analyst_middleware, create_order_middleware
+from agent.tools.mcp_client import load_mcp_tools
 from agent.tools.web_search import web_search
 
 

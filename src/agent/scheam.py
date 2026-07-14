@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 
 from pydantic import BaseModel, Field
 
+
 # =============================================================================
 # ★ 1. 运行时上下文 —— ProcurementContext 和 UserPreferences 数据类
 # =============================================================================

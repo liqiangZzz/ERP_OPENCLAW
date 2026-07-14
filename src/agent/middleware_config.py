@@ -4,10 +4,10 @@
 提供标准中间件的工厂函数，在创建 Agent 时注入。
 针对不同子 Agent 的业务特点（分析型 vs 事务型）配置不同的中间件组合。
 """
+from deepagents.backends import CompositeBackend
 from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
 from langchain_core.language_models import BaseChatModel
 
-from deepagents.backends import CompositeBackend
 from agent.middlewares.tools_summarization import create_summarization_tool_middleware
 
 

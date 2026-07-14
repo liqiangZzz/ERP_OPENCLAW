@@ -25,6 +25,7 @@ load_dotenv(override=True)
 DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
 GLM_API_KEY = os.getenv('GLM_API_KEY')
 QWEN_API_KEY = os.getenv('QWEN_API_KEY')
+ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
 
 
 # =============================================================================
@@ -44,4 +45,3 @@ QWEN_BASE_URL = os.getenv('QWEN_BASE_URL')
 LOCAL_BASE_URL = os.getenv('LOCAL_BASE_URL')
 DAYTONA_API_KEY = os.getenv('DAYTONA_API_KEY')
 DAYTONA_BASE_URL = os.getenv('DAYTONA_BASE_URL')
-REDIS_DATABASE_URL = os.getenv('REDIS_DATABASE_URL')
