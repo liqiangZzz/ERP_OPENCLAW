@@ -17,13 +17,11 @@
     result = backend.execute("pip install numpy")
 """
 from __future__ import annotations
+
 import asyncio
 import logging
 from collections.abc import Callable
 from typing import cast
-
-from opensandbox import SandboxSync
-from opensandbox.models import WriteEntry
 
 from deepagents.backends.protocol import (
     ExecuteResponse,
@@ -31,6 +29,8 @@ from deepagents.backends.protocol import (
     FileUploadResponse,
 )
 from deepagents.backends.sandbox import BaseSandbox
+from opensandbox import SandboxSync
+from opensandbox.models import WriteEntry
 
 # =============================================================================
 # ★ 1. 类型定义

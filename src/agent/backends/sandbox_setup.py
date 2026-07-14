@@ -23,9 +23,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import List, Tuple
 
-from openai.types.responses.container_auto_param import NetworkPolicy
 from opensandbox import SandboxSync
-from opensandbox.models import NetworkRule
 
 from agent.backends.custom_opensandbox import OpenSandboxBackend
 from agent.config import LOCAL_SKILLS_DIR, SANDBOX_SKILLS_ROOT
@@ -75,13 +73,13 @@ def setup_sandbox(config, sandbox_id=None, image=None) -> OpenSandboxBackend:
             resource={"cpu": "2", "memory": "4Gi"},
             timeout=timedelta(hours=2),
             connection_config=config,
-            network_policy=NetworkPolicy(  # 沙箱网络路由限制策略
-                domain_secrets="deny",
-                egress=[
-                    NetworkRule(action="allow", target="pypi.org"),
-                    NetworkRule(action="allow", target="*.github.com"),
-                ]
-            )
+            # network_policy=NetworkPolicy(  # 沙箱网络路由限制策略
+            #     domain_secrets="deny",
+            #     egress=[
+            #         NetworkRule(action="allow", target="pypi.org"),
+            #         NetworkRule(action="allow", target="*.github.com"),
+            #     ]
+            # )
         )
 
         backend = OpenSandboxBackend(sandbox=sandbox)
