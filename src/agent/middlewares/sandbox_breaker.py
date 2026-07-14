@@ -81,19 +81,19 @@ class SandboxCircuitBreakerMiddleware(AgentMiddleware):
             return None
 
         count = _count_consecutive_sandbox_errors(messages)
-        # 连续沙箱错误次数超过阈值时才触发熔断
-        if count > self.threshold:
-            return None
+        # 连续沙箱错误次数达到阈值时触发熔断
+        if count >= self.threshold:
+            logger.warning(
+                "沙箱熔断: 连续 %d 次沙箱错误达到阈值 %d", count, self.threshold,
+            )
+            content = (
+                f"{CIRCUIT_BREAKER_MARKER}: 连续 {count} 次沙箱操作失败，已触发熔断保护。"
+                "请检查沙箱服务状态后重试，或联系管理员。"
+            )
+            # 注入 AIMessage 并跳转到 end 节点，终止当前 Agent 执行
+            return {"jump_to": "end", "messages": [AIMessage(content=content)]}
 
-        logger.warning(
-            "沙箱熔断: 连续 %d 次沙箱错误超过阈值 %d", count, self.threshold,
-        )
-        content = (
-            f"{CIRCUIT_BREAKER_MARKER}: 连续 {count} 次沙箱操作失败，已触发熔断保护。"
-            "请检查沙箱服务状态后重试，或联系管理员。"
-        )
-        # 注入 AIMessage 并跳转到 end 节点，终止当前 Agent 执行
-        return {"jump_to": "end", "messages": [AIMessage(content=content)]}
+        return None
 
     # ------------------------------------------------------------------
     # ★ 异步钩子 —— 熔断检查
