@@ -33,9 +33,9 @@ MAIN_MODEL = init_chat_model(
 SUMMARY_MODEL = ChatOpenAI(
     model="DeepSeek-V4-Flash",
     temperature=0.3,
-    openai_api_key=DEEPSEEK_API_KEY,
-    openai_api_base=DEEPSEEK_BASE_URL,
-    max_tokens=256000,  # 256k tokens，上下文窗口的 2 倍
+    api_key=DEEPSEEK_API_KEY,
+    base_url=DEEPSEEK_BASE_URL,
+    max_tokens=4096,  # 摘要任务输出上限，无需过大
     model_kwargs={
         "extra_body": {
             "thinking": {"type": "disabled"}

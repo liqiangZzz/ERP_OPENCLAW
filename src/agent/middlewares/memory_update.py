@@ -17,7 +17,7 @@ from typing import List, Optional, Dict, Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +162,7 @@ async def _extract_entities(model: BaseChatModel, user_message: str, ai_summary:
     {{"suppliers": ["CompanyA", "CompanyB"], "query": "brief summary"}}"""
 
     try:
-        response = await model.ainvoke(prompt)
+        response = await model.ainvoke([HumanMessage(content=prompt)])
 
         # 从 LLM 回复中提取纯文本（兼容列表和字符串两种 content 格式）
         text = response.content

@@ -13,11 +13,11 @@ from langchain_core.language_models import BaseChatModel
 
 
 # =============================================================================
-# ★ 3. 工厂函数 —— build_summarization_middleware
+# ★ 1. 工厂函数 —— build_summarization_middleware
 # =============================================================================
 def build_summarization_middleware(
     backend: CompositeBackend,
-    model: Union[str, BaseChatModel] = "gpt-4o-mini",
+    model: Union[str, BaseChatModel] = "DeepSeek-V4-Flash",
 ) -> SummarizationToolMiddleware:
     """
     构建摘要工具中间件。
@@ -32,9 +32,9 @@ def build_summarization_middleware(
       压缩对话历史，释放上下文空间
 
     参数:
-        backend: 沙箱后端（用于持久化被压缩的完整对话历史）。
+        backend: 沙箱后端（用于持��化被��缩的完整对话历史）。
         model: 用于生成摘要的模型，可以是字符串标识或模型实例。
-               建议使用轻量、便宜的模型以节省成本（如 "gpt-4o-mini"）。
+               默认为 SUMMARY_MODEL（DeepSeek-V4-Flash），也可以传入其他模型覆盖。
 
     返回:
         SummarizationToolMiddleware: 可直接传入 create_deep_agent 的 middleware 列表。
