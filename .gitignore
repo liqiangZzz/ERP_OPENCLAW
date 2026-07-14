@@ -156,3 +156,6 @@ Thumbs.db
 
 # DeepAgents local runtime workspace
 src/agent/backend/agent_workspace/
+
+# Frontend dependencies
+frontend/node_modules/
