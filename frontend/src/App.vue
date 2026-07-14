@@ -41,13 +41,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import {onMounted, ref} from 'vue'
 import Sidebar from './components/Sidebar.vue'
 import ChatArea from './components/ChatArea.vue'
 import InputArea from './components/InputArea.vue'
 import InterruptBanner from './components/InterruptBanner.vue'
-import { streamChat, resumeChat } from './api/chat.js'
-import { getSessions, getMessages, deleteSession } from './api/history.js'
+import {resumeChat, streamChat} from './api/chat.js'
+import {deleteSession, getMessages, getSessions} from './api/history.js'
 
 /**
  * DeepAgent 聊天应用主组件

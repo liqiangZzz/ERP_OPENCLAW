@@ -58,7 +58,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue'
+import {nextTick, ref} from 'vue'
 
 /**
  * 输入区域组件

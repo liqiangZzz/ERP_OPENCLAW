@@ -3,7 +3,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import {onMounted, ref, watch} from 'vue'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
 

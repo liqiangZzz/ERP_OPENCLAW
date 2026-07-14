@@ -41,7 +41,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import {computed, nextTick, ref, watch} from 'vue'
 import MessageItem from './MessageItem.vue'
 
 /**

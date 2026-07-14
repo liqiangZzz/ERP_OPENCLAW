@@ -4,7 +4,7 @@
  * 创建并挂载 Vue 应用
  */
 
-import { createApp } from 'vue'
+import {createApp} from 'vue'
 import App from './App.vue'
 import './styles/main.css'
 
