@@ -206,8 +206,8 @@ async def create_main_agent(
             routes={
                 "/memories/": StoreBackend(
                     runtime=runtime,
-                    #  按 user_id 命名空间隔离，默认值 'liqiang' 为开发环境兜底
-                    namespace=lambda rt: (getattr(rt.runtime.context, 'user_id', 'liqiang'))
+                    # 按 user_id 命名空间隔离，无用户 ID 时使用 'anonymous' 避免数据混乱
+                    namespace=lambda rt: (getattr(rt.runtime.context, 'user_id', 'anonymous'))
                 ),
                 "/persisted-skills/": StoreBackend(
                     runtime=runtime,

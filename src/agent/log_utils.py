@@ -46,8 +46,10 @@ class MyLogger:
         self.logger = logger  # 写日志的对象
         # 清空所有设置
         self.logger.remove()
-        # 添加控制台输出的格式,sys.stdout为输出到屏幕;关于这些配置还需要自定义请移步官网查看相关参数说明
-        self.logger.add(sys.stdout, level='DEBUG',
+        # 从环境变量读取日志级别，默认 INFO，生产环境可设为 WARNING
+        log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+        # 添加控制台输出的格式,sys.stdout为输出到屏幕;关于这些配置还需要自定义请移步官网查��相关参数说明
+        self.logger.add(sys.stdout, level=log_level,
                         format="<green>{time:YYYYMMDD HH:mm:ss}</green> | "  # 颜色>时间
                                "{process.name} | "  # 进程名
                                "{thread.name} | "  # 线程名
