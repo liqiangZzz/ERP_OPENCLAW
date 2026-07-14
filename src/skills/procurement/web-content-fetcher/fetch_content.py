@@ -8,10 +8,10 @@
     python fetch_content.py https://example.com jina
 """
 
-import sys
-import subprocess
 import argparse
-from typing import Optional, Tuple
+import subprocess
+import sys
+from typing import Tuple
 
 SERVICES = {
     "jina": {
