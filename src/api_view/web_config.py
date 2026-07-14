@@ -8,17 +8,25 @@
 
 包含 MongoDB 连接配置、项目路径等
 """
+import os
 from pathlib import Path
 
 # =============================================================================
 # ★ 1. MongoDB 配置 —— 用于存储 Agent 的短期记忆（checkpoint）
 # =============================================================================
+# 从环境变量读取 MongoDB 配置
+_mongodb_host = os.getenv("MONGODB_HOST", "localhost")
+_mongodb_port = int(os.getenv("MONGODB_PORT", "27017"))
+_mongodb_user = os.getenv("MONGODB_USER", "")
+_mongodb_password = os.getenv("MONGODB_PASSWORD", "")
+_mongodb_db = os.getenv("MONGODB_DB", "langchain_db")
 
-# MongoDB 连接 URI，格式: mongodb://用户名:密码@主机地址:端口/?authSource=认证数据库
-MONGODB_URI = "mongodb://root:root@localhost:27017/?authSource=admin"
-# MongoDB 数据库名称
-MONGODB_DB_NAME = "langchain_db"
-# MongoDB 集合名称，用于存储 checkpoint 数据
+if _mongodb_user and _mongodb_password:
+    MONGODB_URI = f"mongodb://{_mongodb_user}:{_mongodb_password}@{_mongodb_host}:{_mongodb_port}/?authSource=admin"
+else:
+    MONGODB_URI = f"mongodb://{_mongodb_host}:{_mongodb_port}/"
+
+MONGODB_DB_NAME = _mongodb_db
 MONGODB_CHECKPOINT_COLLECTION = "checkpoints"
 
 # =============================================================================
