@@ -1,0 +1,32 @@
+# 采购零配件报价网址映射表
+# 格式: 零部件名称 → 供应商名称 → 报价页面URL
+#
+# URL 指向的页面包含完整产品信息:
+#   - 价格（当前售价、历史价格）
+#   - 型号、单位、品牌、材质等基本信息
+#   - 爬虫技能可从页面提取上述全部数据
+#
+# 使用流程:
+#   1. MCP 工具获取 ERP 数据（零部件名、供应商名）
+#   2. 在本文件中按 零部件名 + 供应商名 查找对应 URL
+#   3. 找到 URL → 爬虫技能获取最新报价 + 产品详情
+#   4. 未找到 URL → web_search 搜索市场价格
+
+mappings:
+  # === 火花塞 ===
+  - part_name: "【NGK原装】摩托车火花塞 Iridium IX CR9EIX 铱金火花塞"
+    supplier: "电气配件专营店"
+    url: "http://39.100.100.28/spark-plug.html"
+
+  - part_name: "【博世BOSCH原装】摩托车火花塞 FR7DC+ 铂金火花塞 高性能"
+    supplier: "博世配件旗舰店"
+    url: "http://39.100.100.28/spark-plug-bosch.html"
+
+  - part_name: "【电装DENSO原装】摩托车火花塞 U27ETR 铱金 省油型"
+    supplier: "电装配件专营店"
+    url: "http://39.100.100.28/spark-plug-denso.html"
+
+  # === 以下待补充实际业务数据 ===
+  # - part_name: ""
+  #   supplier: ""
+  #   url: ""
