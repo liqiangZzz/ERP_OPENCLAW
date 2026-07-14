@@ -69,11 +69,21 @@ app = FastAPI(
 # =============================================================================
 # ★ 3. CORS 中间件配置
 # =============================================================================
+import os
 
-# 允许跨域请求，方便前端开发
+# 允许跨域请求，从环境变量读取，默认为开发环境配置
+# 生产环境应设置 ALLOWED_ORIGINS 环境变量，多个域名用逗号分隔
+_allowed_origins = os.getenv("ALLOWED_ORIGINS", "")
+if _allowed_origins:
+    # 生产环境：使用环境变量中配置的域名
+    allow_origins = [origin.strip() for origin in _allowed_origins.split(",") if origin.strip()]
+else:
+    # 开发环境：允许本地开发
+    allow_origins = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生成环境建议限制为具体的前端域名
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
