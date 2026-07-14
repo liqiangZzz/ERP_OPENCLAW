@@ -9,10 +9,10 @@ import re
 import tempfile
 import uuid
 from datetime import datetime
-from idlelib.undo import Command
 from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Query
+from langgraph.types import Command
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 

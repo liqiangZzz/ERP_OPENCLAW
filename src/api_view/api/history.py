@@ -288,7 +288,7 @@ def serialize_messages_from_checkpoint(messages: list) -> list:
 @router.get("/history", response_model=SessionListResponse)
 async def get_sessions(
         page: int = Query(1, ge=1, description="当前页码"),
-        limit: int = Query(20, ge=100, description="每页数量")
+        limit: int = Query(20, ge=1, le=100, description="每页数量")
 ):
     """获取会话列表"""
     try:
@@ -406,7 +406,7 @@ async def delete_session(thread_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.patch("history/{thread_id}")
+@router.patch("/history/{thread_id}")
 async def update_session_title(thread_id: str, title: str = Query(..., description="新的会话标题")):
     """更新会话标题"""
     return {

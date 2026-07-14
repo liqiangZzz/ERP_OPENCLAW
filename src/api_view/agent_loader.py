@@ -40,7 +40,7 @@ class AgentLoader:
     # 初始化标志
     _initialized: bool = False
     # 预计算上下文（MCP 工具/YAML 配置）
-    _precomputed = PrecomputedContext = None
+    _precomputed = None
     # 最近创建的 agent graph 引用（用于状态查询；所有 graph 共享同一 checkpointer）
     _agent = None
 
@@ -256,17 +256,18 @@ class AgentLoader:
     # ★ 2.6 会话查询与删除
     # =====================================================================
 
-    #  获取所有 thread_id
+    # 获取所有 thread_id
     def get_all_thread_ids(self) -> List[str]:
         """
-          从 MongoDB 中提取所有有效的会话 thread_id。
+        从 MongoDB 中提取所有有效的会话 thread_id。
 
-          过滤掉空值、星号等无效标识。
+        过滤掉空值、星号等无效标识。
 
-          Returns:
-              有效的 thread_id 字符串列表
-          """
-        if self._mongodb_client is not None:
+        Returns:
+            有效的 thread_id 字符串列表
+        """
+        # MongoDB 未连接时返回空列表
+        if self._mongodb_client is None:
             return []
 
         db = self._mongodb_client[MONGODB_DB_NAME]
@@ -287,7 +288,8 @@ class AgentLoader:
         Returns:
             最后更新时间 datetime 对象
         """
-        if self._mongodb_client is not None:
+        # MongoDB 未连接时返回当前时间
+        if self._mongodb_client is None:
             return datetime.now()
         db = self._mongodb_client[MONGODB_DB_NAME]
         collection = db[MONGODB_CHECKPOINT_COLLECTION]
@@ -311,15 +313,16 @@ class AgentLoader:
     # 删除会话（checkpoint + 展示消息）
     async def delete_session(self, thread_id: str) -> bool:
         """
-          删除指定会话的所有数据（包含 checkpoint 和展示消息）。
+        删除指定会话的所有数据（包含 checkpoint 和展示消息）。
 
-          Args:
-              thread_id: 会话线程 ID
+        Args:
+            thread_id: 会话线程 ID
 
-          Returns:
-              删除成功返回 True，失败返回 False
+        Returns:
+            删除成功返回 True，失败返回 False
         """
-        if self._mongodb_client is not None:
+        # MongoDB 未连接时返回失败
+        if self._mongodb_client is None:
             return False
 
         db = self._mongodb_client[MONGODB_DB_NAME]
@@ -362,18 +365,19 @@ class AgentLoader:
     # 保存展示消息到 MongoDB
     async def save_display_messages(self, thread_id: str, messages: List[Dict[str, Any]]) -> bool:
         """
-         保存会话的展示消息到 MongoDB。
+        保存会话的展示消息到 MongoDB。
 
-         先清除该 thread_id 的旧消息，再批量写入新消息。每条消息会先经过截断处理。
+        先清除该 thread_id 的旧消息，再批量写入新消息。每条消息会先经过截断处理。
 
-         Args:
-             thread_id: 会话线程 ID
-             messages: 消息字典列表
+        Args:
+            thread_id: 会话线程 ID
+            messages: 消息字典列表
 
-         Returns:
-             保存成功返回 True，失败返回 False
-         """
-        if self._mongodb_client is not None:
+        Returns:
+            保存成功返回 True，失败返回 False
+        """
+        # MongoDB 未连接时返回失败
+        if self._mongodb_client is None:
             return False
         try:
             db = self._mongodb_client[MONGODB_DB_NAME]
@@ -387,7 +391,8 @@ class AgentLoader:
                 now = datetime.now()
                 docs = []
                 for i, msg in enumerate(messages):
-                    msg = self._truncate_message_fields(msg, i)
+                    # 截断过长字段（避免传入 i 参数，方法只接受 msg）
+                    msg = self._truncate_message_fields(msg)
                     docs.append({
                         "thread_id": thread_id,
                         "index": i,
@@ -406,17 +411,18 @@ class AgentLoader:
     # 从 MongoDB 读取展示消息
     async def get_display_messages(self, thread_id: str) -> Optional[List[Dict[str, Any]]]:
         """
-           从 MongoDB 读取指定会话的展示消息列表。
+        从 MongoDB 读取指定会话的展示消息列表。
 
-           按 index 字段升序排列，确保消息顺序正确。
+        按 index 字段升序排列，确保消息顺序正确。
 
-           Args:
-               thread_id: 会话线程 ID
+        Args:
+            thread_id: 会话线程 ID
 
-           Returns:
-               消息字典列表，若无数据则返回 None，出错返回 None
-       """
-        if self._mongodb_client is not None:
+        Returns:
+            消息字典列表，若无数据则返回 None，出错返回 None
+        """
+        # MongoDB 未连接时返回 None
+        if self._mongodb_client is None:
             return None
 
         try:
