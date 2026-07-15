@@ -8,6 +8,7 @@ DeepAgent Chat API - FastAPI 主应用
 
 提供基于 DeepAgent 的 AI 对话系统后端 API
 """
+import warnings
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,7 +16,20 @@ from starlette.middleware.cors import CORSMiddleware
 
 from api_view.agent_loader import agent_loader
 from api_view.api import chat, history
-from api_view.web_config import API_TITLE, API_DESCRIPTION, API_VERSION
+from api_view.web_config import API_DESCRIPTION, API_TITLE, API_VERSION
+
+# deepagents 0.4.x 的 task 工具将 ToolRuntime 的 context 泛型保留为默认 None，
+# 主 Agent 使用 ProcurementContext 时 Pydantic 会在每个流事件重复输出序列化告警。
+# 运行时上下文仍可正常读取；只过滤这一条已知且范围明确的第三方告警。
+warnings.filterwarnings(
+    "ignore",
+    message=(
+        r"(?s)^Pydantic serializer warnings:.*field_name='context'.*"
+        r"input_type=ProcurementContext"
+    ),
+    category=UserWarning,
+    module=r"pydantic\.(main|functional_validators)",
+)
 
 
 # =============================================================================

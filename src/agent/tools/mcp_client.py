@@ -9,9 +9,11 @@ MCP 工具客户端。
 
     all_tools, analyst_tools, order_tools, chart_tools = await load_mcp_tools()
 """
-from typing import Tuple
+from typing import List, Tuple
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
+
+from agent.env_utils import ANALYSIS_MCP_URL, ERP_MCP_URL
 
 # =============================================================================
 # ★ 1. MCP Server 连接配置 —— 定义所有 MCP Server 的 URL 和传输协议
@@ -21,15 +23,17 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 MCP_SERVER_CONFIG = {
     # ERP 业务 API：提供供应商、零部件、库存、订单等ERP相关工具
     "erp-api": {
-        "url": "http://127.0.0.1:8000/mcp",
+        "url": ERP_MCP_URL,
         "transport": "streamable_http",
     },
     # 魔塔社区分析 API： 提供可视化和图表生成工具
-    "analysis": {
-        "url": "https://mcp.api-inference.modelscope.net/90349db99eef45/mcp",
+}
+
+if ANALYSIS_MCP_URL:
+    MCP_SERVER_CONFIG["analysis"] = {
+        "url": ANALYSIS_MCP_URL,
         "transport": "streamable_http",
     }
-}
 
 # =============================================================================
 # ★ 2. 工具分组规则（前缀匹配） —— 定义分析/订单/图表工具的前缀筛选
@@ -74,9 +78,14 @@ async def load_mcp_tools(server_config: dict | None = None) -> Tuple[List, List,
     erp_tools = await mcp_client.get_tools(server_name="erp-api")
     print(f"[INFO] 已从ERP MCP Server 加载 {len(erp_tools)} 个业务工具")
 
-    # 从魔塔社区 MCP Server 获取图表工具
-    analysis_tools = await mcp_client.get_tools(server_name="analysis")
-    print(f"[INFO] 已从魔塔社区 MCP Server 加载 {len(analysis_tools)} 个图表工具（可视化+其他）")
+    # 外部图表 MCP 为可选配置；未配置时仅启用 ERP 工具。
+    analysis_tools = []
+    if "analysis" in server_config:
+        analysis_tools = await mcp_client.get_tools(server_name="analysis")
+        print(
+            f"[INFO] 已从魔塔社区 MCP Server 加载 "
+            f"{len(analysis_tools)} 个图表工具（可视化+其他）"
+        )
 
     # 合并全部工具
     all_tools = list(erp_tools) + list(analysis_tools)

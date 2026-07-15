@@ -7,6 +7,21 @@
 const API_BASE = '/api/chat'
 
 /**
+ * 获取或创建本地用户 ID
+ *
+ * 使用 localStorage 持久化一个随机 UUID，作为无登录场景下的用户标识
+ */
+function getUserId() {
+  const KEY = 'erp_user_id'
+  let userId = localStorage.getItem(KEY)
+  if (!userId) {
+    userId = crypto.randomUUID()
+    localStorage.setItem(KEY, userId)
+  }
+  return userId
+}
+
+/**
  * 流式对话
  *
  * 使用 fetch + ReadableStream 接收流式响应（支持 POST 请求）
@@ -41,7 +56,8 @@ export async function streamChat(message, threadId = null, callbacks = {}, signa
       },
       body: JSON.stringify({
         message: message,
-        thread_id: threadId
+        thread_id: threadId,
+        user_id: getUserId()
       }),
       signal: signal  // 支持取消请求
     })
@@ -151,10 +167,16 @@ async function _processStream(response, threadId, callbacks, fullContent, toolCa
         continue
       }
 
+      let data
       try {
-        const data = JSON.parse(line.slice(5).trim())
+        data = JSON.parse(line.slice(5).trim())
+      } catch (parseError) {
+        // 仅忽略真正的 JSON 解析错误，业务错误必须继续向上抛出
+        console.warn('[ChatAPI] 解析 SSE 数据失败:', parseError)
+        continue
+      }
 
-        switch (data.type) {
+      switch (data.type) {
           case 'token':
             // AI 生成的文本片段
             fullContent += data.content
@@ -231,16 +253,8 @@ async function _processStream(response, threadId, callbacks, fullContent, toolCa
             // 错误
             throw new Error(data.message)
 
-          default:
-            break
-        }
-      } catch (parseError) {
-        // 如果是取消导致的，向上抛出
-        if (parseError.name === 'AbortError') {
-          throw parseError
-        }
-        // 忽略解析错误，可能是多行 JSON
-        console.warn('[ChatAPI] 解析 SSE 数据失败:', parseError)
+        default:
+          break
       }
     }
   }

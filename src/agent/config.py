@@ -9,8 +9,19 @@ from langgraph.store.memory import InMemoryStore
 from opensandbox.config import ConnectionConfigSync
 from pymongo import MongoClient
 
-from agent.env_utils import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, GLM_BASE_URL, GLM_API_KEY, QWEN_BASE_URL, QWEN_API_KEY, \
-    SANDBOX_DOMAIN, OPENSANDBOX_API_KEY
+from agent.env_utils import (
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_BASE_URL,
+    GLM_API_KEY,
+    GLM_BASE_URL,
+    MONGODB_CHECKPOINT_COLLECTION,
+    MONGODB_DB_NAME,
+    MONGODB_URI,
+    OPENSANDBOX_API_KEY,
+    QWEN_API_KEY,
+    QWEN_BASE_URL,
+    SANDBOX_DOMAIN,
+)
 
 # =============================================================================
 # ★ 1. 模型配置 —— 主模型、摘要模型、备用模型
@@ -37,11 +48,7 @@ SUMMARY_MODEL = ChatOpenAI(
     api_key=DEEPSEEK_API_KEY,
     base_url=DEEPSEEK_BASE_URL,
     max_tokens=4096,  # 摘要任务输出上限，无需过大
-    model_kwargs={
-        "extra_body": {
-            "thinking": {"type": "disabled"}
-        }
-    }
+    extra_body={"thinking": {"type": "disabled"}},
 )
 
 # ★ 备用模型（当主模型故障时使用）
@@ -118,12 +125,6 @@ SCOPE_MAP = {
 
 # =============================================================================
 # ★ 6. MongoDB 配置 —— 用于持久化 Agent 短期记忆/checkpoint
-# =============================================================================
-MONGODB_URI = "mongodb://root:root@localhost:27017/?authSource=admin"
-MONGODB_DB_NAME = "langchain_db"
-MONGODB_CHECKPOINT_COLLECTION = "checkpoints"
-
-# =============================================================================
 # ★ 7. 持久化存储 —— InMemoryStore（开发）+ MongoDBSaver（生产）
 # =============================================================================
 # ★ InMemoryStore: 开发阶段使用。生产环境替换为持久 Store。

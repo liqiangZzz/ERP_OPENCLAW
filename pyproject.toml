@@ -1,7 +1,7 @@
 [project]
 name = "agent"
 version = "0.0.1"
-description = "Starter template for making a new agent LangGraph."
+description = "ERP procurement assistant built with LangGraph, DeepAgents, FastAPI and MCP."
 authors = [
     { name = "William Fu-Hinthorn", email = "13333726+hinthornw@users.noreply.github.com" },
 ]
@@ -9,23 +9,42 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = [
-    "langgraph>=1.0.0",
-    "python-dotenv>=1.0.1",
+    "deepagents>=0.4.12,<0.5",
+    "fastapi>=0.115,<1.1",
+    "fastmcp>=3.2.4,<4",
+    "httpx>=0.28,<0.29",
+    "langchain>=1.2.13,<2",
+    "langchain-mcp-adapters>=0.2.2,<0.3",
+    "langchain-openai>=1.1.12,<2",
+    "langgraph>=1.1.3,<2",
+    "langgraph-checkpoint-mongodb>=0.2,<0.4",
+    "loguru>=0.7,<0.8",
+    "opensandbox>=0.1.7,<0.2",
+    "pymongo>=4.10,<5",
+    "python-dotenv>=1.2,<2",
+    "pyyaml>=6,<7",
+    "requests>=2.32,<3",
+    "beautifulsoup4>=4.12,<5",
+    "uvicorn[standard]>=0.30,<1",
+    "zai-sdk>=0.2.2,<0.3",
 ]
 
 
 [project.optional-dependencies]
-dev = ["mypy>=1.11.1", "ruff>=0.6.1"]
+dev = [
+    "anyio>=4.7",
+    "mypy>=1.11.1",
+    "pytest>=9",
+    "ruff>=0.8.2",
+]
 
 [build-system]
 requires = ["setuptools>=73.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["langgraph.templates.agent", "agent"]
-[tool.setuptools.package-dir]
-"langgraph.templates.agent" = "src/agent"
-"agent" = "src/agent"
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["agent*", "api_view*", "mcp_server*"]
 
 
 [tool.setuptools.package-data]

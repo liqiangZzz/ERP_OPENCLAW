@@ -49,11 +49,13 @@ class ContextInjectionMiddleware(AgentMiddleware):
         if ctx is None:
             logger.warning("ContextInjectionMiddleware: runtime.context 为 None，跳过上下文注入")
             return None
-        user_id = ctx.get("user_id", None)
+        user_id = ctx.get("user_id") if isinstance(ctx, dict) else getattr(ctx, "user_id", None)
         if not user_id:
             logger.warning("ContextInjectionMiddleware: runtime.context 中没有 user_id，跳过上下文注入")
             return None
-        username = ctx.get("username", None) or user_id
+        username = (
+            ctx.get("username") if isinstance(ctx, dict) else getattr(ctx, "username", None)
+        ) or user_id
 
         logger.info(f"ContextInjectionMiddleware: 注入用户上下文 user_id={user_id}, username={username}")
 

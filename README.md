@@ -1,61 +1,74 @@
-# New LangGraph Project
+# ERP OpenClaw
 
-[![CI](https://github.com/langchain-ai/new-langgraph-project/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/langchain-ai/new-langgraph-project/actions/workflows/unit-tests.yml)
-[![Integration Tests](https://github.com/langchain-ai/new-langgraph-project/actions/workflows/integration-tests.yml/badge.svg)](https://github.com/langchain-ai/new-langgraph-project/actions/workflows/integration-tests.yml)
+基于 LangGraph、DeepAgents、FastAPI、MCP 和 Vue 3 的 ERP 采购智能助手。
 
-This template demonstrates a simple application implemented using [LangGraph](https://github.com/langchain-ai/langgraph), designed for showing how to get started with [LangGraph Server](https://langchain-ai.github.io/langgraph/concepts/langgraph_server/#langgraph-server) and using [LangGraph Studio](https://langchain-ai.github.io/langgraph/concepts/langgraph_studio/), a visual debugging IDE.
+## 运行环境
 
-<div align="center">
-  <img src="./static/studio_ui.png" alt="Graph view in LangGraph studio UI" width="75%" />
-</div>
+- Python 3.10+（推荐 3.11）
+- Node.js 18+
+- MongoDB 6+（由你本地自行启动）
+- Java ERP API，默认 `http://localhost:8080/api`
+- OpenSandbox，默认 `http://localhost:8081`
 
-The core logic defined in `src/agent/graph.py`, showcases an single-step application that responds with a fixed string and the configuration provided.
-
-You can extend this graph to orchestrate more complex agentic workflows that can be visualized and debugged in LangGraph Studio.
-
-## Getting Started
-
-1. Install dependencies, along with the [LangGraph CLI](https://langchain-ai.github.io/langgraph/concepts/langgraph_cli/), which will be used to run the server.
+## 初始化
 
 ```bash
-cd path/to/your/app
-pip install -e . "langgraph-cli[inmem]"
-```
-
-2. (Optional) Customize the code and project as needed. Create a `.env` file if you need to use secrets.
-
-```bash
+python3.11 -m venv .venv
+.venv/bin/python -m ensurepip --upgrade
+.venv/bin/python -m pip install -e '.[dev]'
 cp .env.example .env
+cd frontend && npm ci
 ```
 
-If you want to enable LangSmith tracing, add your LangSmith API key to the `.env` file.
+在 `.env` 中填写模型和 OpenSandbox 凭据。不要提交 `.env`。
+本地开发默认 `PREWARM_SANDBOX=false`，启动 Python 服务时不会主动创建沙箱；
+设置为 `true` 后才会在启动阶段预热一个沙箱。
+`CLEANUP_SANDBOX_ON_SHUTDOWN=false` 会在服务重启时保留用户远程沙箱；
+只有明确需要关机清理远程资源时才设为 `true`。
 
-```text
-# .env
-LANGSMITH_API_KEY=lsv2...
+环境检查：
+
+```bash
+.venv/bin/python scripts/check_environment.py
 ```
 
-3. Start the LangGraph Server.
+## 启动
 
-```shell
-langgraph dev
+各服务手动启动，便于直接查看日志和处理端口占用。启动顺序：
+
+1. 启动 MongoDB Docker 容器。
+2. 启动 Java ERP API。
+3. 启动 OpenSandbox（需要沙箱功能时）。
+4. 启动 ERP MCP。
+5. 启动 FastAPI 后端。
+6. 启动 Vue 前端。
+
+后三个服务分别在独立终端运行：
+
+```bash
+# 终端 1：ERP MCP
+make mcp
+
+# 终端 2：FastAPI 后端
+make backend
+
+# 终端 3：Vue 前端
+make frontend
 ```
 
-For more information on getting started with LangGraph Server, [see here](https://langchain-ai.github.io/langgraph/tutorials/langgraph-platform/local-server/).
+访问地址：
 
-## How to customize
+- 前端：http://localhost:3000
+- API 文档：http://localhost:8090/docs
+- MCP：http://127.0.0.1:8000/mcp
 
-1. **Define runtime context**: Modify the `Context` class in the `graph.py` file to expose the arguments you want to configure per assistant. For example, in a chatbot application you may want to define a dynamic system prompt or LLM to use. For more information on runtime context in LangGraph, [see here](https://langchain-ai.github.io/langgraph/agents/context/?h=context#static-runtime-context).
+## 常用命令
 
-2. **Extend the graph**: The core logic of the application is defined in [graph.py](./src/agent/graph.py). You can modify this file to add new nodes, edges, or change the flow of information.
+```bash
+make install
+make check
+make test
+make lint
+```
 
-## Development
-
-While iterating on your graph in LangGraph Studio, you can edit past state and rerun your app from previous states to debug specific nodes. Local changes will be automatically applied via hot reload.
-
-Follow-up requests extend the same thread. You can create an entirely new thread, clearing previous history, using the `+` button in the top right.
-
-For more advanced features and examples, refer to the [LangGraph documentation](https://langchain-ai.github.io/langgraph/). These resources can help you adapt this template for your specific use case and build more sophisticated conversational agents.
-
-LangGraph Studio also integrates with [LangSmith](https://smith.langchain.com/) for more in-depth tracing and collaboration with teammates, allowing you to analyze and optimize your chatbot's performance.
-
+外部图表 MCP 是可选能力。仅在 `.env` 配置 `ANALYSIS_MCP_URL` 时加载，不配置不影响 ERP 基础工具。

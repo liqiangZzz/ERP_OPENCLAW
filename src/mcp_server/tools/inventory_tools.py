@@ -3,7 +3,9 @@
 
 提供库存预警查询等工具，注册到 MCP Server。
 """
-from fastmcp import FastMCP, Context
+from fastmcp import Context, FastMCP
+
+from mcp_server.result_utils import ensure_nonempty_content
 
 # 分组名称，用于生成 MCP 工具名称前缀
 GROUP_NAME = "inventory"
@@ -34,6 +36,6 @@ def register_inventory_tools(mcp: FastMCP):
             if result.get("code") != 200:
                 return [f"API error: code={result.get('code')}"]
 
-            return result.get("data", [])
+            return ensure_nonempty_content(result.get("data", []))
         except Exception as e:
             return [f'没有查询到任何信息，而且报错: {e}']

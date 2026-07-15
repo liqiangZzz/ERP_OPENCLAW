@@ -34,7 +34,7 @@ def _tool_call_id(request: ToolCallRequest) -> str | None:
     Returns:
         工具调用 ID 字符串，若无法获取则返回 None。
     """
-    tc = getattr(request.tool_call, "tool_call", None)
+    tc = getattr(request, "tool_call", None)
     if isinstance(tc, dict):
         return tc.get("id")
     return getattr(tc, "id", None)

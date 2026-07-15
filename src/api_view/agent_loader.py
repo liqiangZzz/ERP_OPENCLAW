@@ -1,13 +1,18 @@
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pymongo import MongoClient
 
 from agent.backends import sandbox_manager
-from agent.config import CHECKPOINTER, MONGODB_DB_NAME, MONGODB_CHECKPOINT_COLLECTION
-from agent.main_agent import precompute_agent_context, create_main_agent, PrecomputedContext
+from agent.config import CHECKPOINTER, MONGODB_CHECKPOINT_COLLECTION, MONGODB_DB_NAME
+from agent.env_utils import CLEANUP_SANDBOX_ON_SHUTDOWN, PREWARM_SANDBOX
+from agent.main_agent import (
+    PrecomputedContext,
+    create_main_agent,
+    precompute_agent_context,
+)
 from api_view.web_config import MONGODB_URI
 
 
@@ -84,8 +89,11 @@ class AgentLoader:
             self._precomputed = await precompute_agent_context()
             print("[AgentLoader] 预计算完成（MCP 工具 + 图表工具 + YAML 配置）")
 
-            # 4.  预热第一个沙箱（阻塞 ~15s，首个用户无需等待创建）
-            await sandbox_manager.pre_warm()
+            # 4. 沙箱预热可选；本地开发默认关闭，避免拖慢 Python 服务启动。
+            if PREWARM_SANDBOX:
+                await sandbox_manager.pre_warm()
+            else:
+                print("[AgentLoader] 已跳过沙箱预热（PREWARM_SANDBOX=false）")
 
             self._initialized = True
             print("[AgentLoader] 初始化完成")
@@ -107,7 +115,9 @@ class AgentLoader:
         应用关闭时清理所有沙箱和 MongoDB 连接
         """
         print("[AgentLoader] 正在关闭...")
-        await sandbox_manager.shutdown()
+        await sandbox_manager.shutdown(
+            cleanup_remote=CLEANUP_SANDBOX_ON_SHUTDOWN,
+        )
         if self._mongodb_client is not None:
             self._mongodb_client.close()
             self._mongodb_client = None

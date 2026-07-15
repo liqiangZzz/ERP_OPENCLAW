@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from langgraph.types import Command
 from pydantic import BaseModel
 
-from agent.scheam import Message, ChatResponse, ChatRequest
+from agent.scheam import ChatRequest, ChatResponse, Message
 from api_view.agent_loader import agent_loader
 
 # 创建路由
@@ -241,8 +241,22 @@ async def stream_chat_response(
     context = {"user_id": user_id, "username": user_id}
     config = agent_loader.create_config(thread_id, user_id=user_id)
 
-    # 获取该用户的 per-user agent graph（沙箱缓存 + 预计算组件）
-    agent_graph = await agent_loader.get_agent_for_user(user_id)
+    # 获取该用户的 per-user agent graph（沙箱缓存 + 预计算组件）。
+    # 初始化失败也必须通过 SSE 返回，否则 StreamingResponse 会抛出 ASGI
+    # ExceptionGroup，前端将一直停留在“正在生成”。
+    try:
+        agent_graph = await agent_loader.get_agent_for_user(user_id)
+    except Exception as e:
+        write_debug_log(
+            get_debug_log_path(thread_id),
+            "AGENT_INIT_ERROR",
+            {"error": str(e), "user_id": user_id},
+        )
+        yield create_sse_message({
+            "type": "error",
+            "message": f"Agent 初始化失败：{e}",
+        })
+        return
     collected_content = ""
     # 工具调用栈，支持嵌套工具调用（主代理调 task → 子代理调 generate_chart）
     tool_call_stack = []

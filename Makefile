@@ -1,13 +1,30 @@
-.PHONY: all format lint test tests test_watch integration_tests docker_tests help extended_tests
+.PHONY: all install check backend mcp frontend format lint test tests test_watch integration_tests docker_tests help extended_tests
 
 # Default target executed when no arguments are given to make.
 all: help
 
-# Define a variable for the test file path.
-TEST_FILE ?= tests/unit_tests/
+PYTHON ?= .venv/bin/python
+
+install:
+	$(PYTHON) -m pip install -e '.[dev]'
+	cd frontend && npm ci
+
+check:
+	$(PYTHON) scripts/check_environment.py
+
+backend:
+	PYTHONPATH=src $(PYTHON) -m uvicorn api_view.web_main:app --reload --host 0.0.0.0 --port 8090
+
+mcp:
+	PYTHONPATH=src $(PYTHON) -m mcp_server.server_main
+
+frontend:
+	cd frontend && npm run dev
+
+TEST_FILE ?= tests
 
 test:
-	python -m pytest $(TEST_FILE)
+	PYTHONPATH=src $(PYTHON) -m pytest $(TEST_FILE)
 
 integration_tests:
 	python -m pytest tests/integration_tests 
@@ -58,10 +75,14 @@ spell_fix:
 
 help:
 	@echo '----'
+	@echo 'install                      - install Python and frontend dependencies'
+	@echo 'check                        - check environment variables and services'
+	@echo 'mcp                          - start ERP MCP server'
+	@echo 'backend                      - start FastAPI backend'
+	@echo 'frontend                     - start Vue development server'
 	@echo 'format                       - run code formatters'
 	@echo 'lint                         - run linters'
 	@echo 'test                         - run unit tests'
 	@echo 'tests                        - run unit tests'
 	@echo 'test TEST_FILE=<test_file>   - run all tests in file'
 	@echo 'test_watch                   - run unit tests in watch mode'
-

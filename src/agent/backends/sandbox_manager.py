@@ -263,12 +263,12 @@ async def cleanup_user(user_id: str) -> None:
     logger.info("用户 %s 沙箱已清理", user_id)
 
 
-async def shutdown() -> None:
+async def shutdown(cleanup_remote: bool = False) -> None:
     """
-    清理所有沙箱（含预热），释放资源
+    释放沙箱管理器资源。
 
-    按顺序销毁预热沙箱、所有用户沙箱，最后关闭 MongoDB 连接
-    通常在应用关闭时调用。
+    预热沙箱没有用户绑定，始终销毁。用户沙箱默认保留，以便服务重启后
+    根据 MongoDB 注册记录重连；仅在 cleanup_remote=True 时主动删除。
     """
 
     global _warm_reserve, _mongo_client
@@ -282,8 +282,12 @@ async def shutdown() -> None:
             pass
         _warm_reserve = None
 
-    for user_id in list(SANDBOX_BACKENDS.keys()):
-        await cleanup_user(user_id)
+    if cleanup_remote:
+        for user_id in list(SANDBOX_BACKENDS.keys()):
+            await cleanup_user(user_id)
+    else:
+        SANDBOX_BACKENDS.clear()
+        logger.info("已保留用户远程沙箱，供下次启动重连")
 
     if _mongo_client is not None:
         _mongo_client.close()

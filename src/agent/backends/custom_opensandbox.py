@@ -88,7 +88,7 @@ class OpenSandboxBackend(BaseSandbox):
         self._sandbox = sandbox
 
         # sandbox.kill() 手动关闭沙箱
-        self.default_timeout = timeout
+        self._default_timeout = timeout
 
         # 处理轮训策略：若传入的是数字则包装为常量函数，否则直接使用
         if callable(sync_polling_interval):

@@ -5,7 +5,9 @@
 """
 from typing import Optional
 
-from fastmcp import FastMCP, Context
+from fastmcp import Context, FastMCP
+
+from mcp_server.result_utils import ensure_nonempty_content
 
 # 分组名称，用于生成 MCP 工具名称前缀（最终工具名称为 part_query / part_search）
 GROUP_NAME = "part"
@@ -62,7 +64,7 @@ def register_parts_tools(mcp: FastMCP):
                 return [f"API error: code={result.get('code')}"]
 
             # 返回 data 字段，通常包含 records，total，current，size 等
-            return result.get("data", {}).get("records", [])
+            return ensure_nonempty_content(result.get("data", {}).get("records", []))
         except Exception as e:
             return [f'没有查询到任何信息，而且报错: {e}']
 
@@ -86,7 +88,7 @@ def register_parts_tools(mcp: FastMCP):
                 return [f"API error: code={result.get('code')}"]
 
             # data 为数组
-            return result.get("data", [])
+            return ensure_nonempty_content(result.get("data", []))
         except Exception as e:
             return [f'没有查询到任何信息，而且报错: {e}']
 
@@ -107,6 +109,6 @@ def register_parts_tools(mcp: FastMCP):
             if result.get("code") != 200:
                 return [f"API error: code={result.get('code')}"]
 
-            return result.get("data", [])
+            return ensure_nonempty_content(result.get("data", []))
         except Exception as e:
             return [f'没有查询到任何信息，而且报错: {e}']

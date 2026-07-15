@@ -260,7 +260,7 @@ class MemoryUpdateMiddleware(AgentMiddleware):
             if ctx is None:
                 logger.warning("MemoryUpdateMiddleware: 无法获取用户上下文，跳过记忆更新")
                 return None
-            user_id = ctx.get("user_id", None)
+            user_id = ctx.get("user_id") if isinstance(ctx, dict) else getattr(ctx, "user_id", None)
             if user_id is None:
                 logger.warning("MemoryUpdateMiddleware: 无法获取用户 ID，跳过记忆更新")
                 return None

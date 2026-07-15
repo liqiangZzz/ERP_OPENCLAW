@@ -12,10 +12,10 @@ import os
 from dotenv import load_dotenv
 
 # =============================================================================
-# ★ 1. 加载 .env 文件 —— override=True 覆盖已存在的环境变量
+# ★ 1. 加载 .env 文件 —— 不覆盖进程环境，便于容器和生产环境注入配置
 # =============================================================================
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 
 # =============================================================================
@@ -47,5 +47,29 @@ DAYTONA_API_KEY = os.getenv('DAYTONA_API_KEY')
 DAYTONA_BASE_URL = os.getenv('DAYTONA_BASE_URL')
 
 # 内网的 OpenSandbox 服务的 API Key
-SANDBOX_DOMAIN = os.getenv("SANDBOX_DOMAIN", "http://192.168.0.188:8080")
-OPENSANDBOX_API_KEY = os.environ.get("OPENSANDBOX_API_KEY", "123456")
+SANDBOX_DOMAIN = os.getenv("SANDBOX_DOMAIN", "http://localhost:8081")
+OPENSANDBOX_API_KEY = os.getenv("OPENSANDBOX_API_KEY")
+PREWARM_SANDBOX = os.getenv("PREWARM_SANDBOX", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+CLEANUP_SANDBOX_ON_SHUTDOWN = os.getenv(
+    "CLEANUP_SANDBOX_ON_SHUTDOWN",
+    "false",
+).lower() in {"1", "true", "yes", "on"}
+
+# 数据库与服务地址
+MONGODB_URI = os.getenv(
+    "MONGODB_URI",
+    "mongodb://root:root@localhost:27017/?authSource=admin",
+)
+MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "langchain_db")
+MONGODB_CHECKPOINT_COLLECTION = os.getenv(
+    "MONGODB_CHECKPOINT_COLLECTION",
+    "checkpoints",
+)
+
+ERP_MCP_URL = os.getenv("ERP_MCP_URL", "http://127.0.0.1:8000/mcp")
+ANALYSIS_MCP_URL = os.getenv("ANALYSIS_MCP_URL")
