@@ -7,7 +7,7 @@ from pymongo import MongoClient
 
 from agent.backends import sandbox_manager
 from agent.config import CHECKPOINTER, MONGODB_DB_NAME, MONGODB_CHECKPOINT_COLLECTION
-from agent.main_agent import precompute_agent_context
+from agent.main_agent import precompute_agent_context, create_main_agent, PrecomputedContext
 from api_view.web_config import MONGODB_URI
 
 
@@ -40,7 +40,7 @@ class AgentLoader:
     # 初始化标志
     _initialized: bool = False
     # 预计算上下文（MCP 工具/YAML 配置）
-    _precomputed = None
+    _precomputed: PrecomputedContext = None
     # 最近创建的 agent graph 引用（用于状态查询；所有 graph 共享同一 checkpointer）
     _agent = None
 
@@ -154,7 +154,7 @@ class AgentLoader:
         config = self.create_config(user_id=user_id)
         config["configurable"]["user_id"] = user_id
 
-        # 3.todo   创建 agent graph
+        # 3. 创建 agent graph
         agent_graph = await create_main_agent(
             config,
             sandbox_backend=sandbox_backend,

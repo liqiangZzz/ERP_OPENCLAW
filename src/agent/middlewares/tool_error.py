@@ -6,7 +6,7 @@ wrap_tool_call 捕获所有工具调用异常，转换为 ToolMessage（status="
 """
 import json
 import logging
-from typing import Callable, Any, Awaitable
+from typing import Callable, Awaitable
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
@@ -107,8 +107,8 @@ class ToolErrorMiddleware(AgentMiddleware):
     def wrap_tool_call(
             self,
             request: ToolCallRequest,
-            handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
-    ) -> ToolMessage | Command[Any]:
+            handler: Callable[[ToolCallRequest], ToolMessage | Command],
+    ) -> ToolMessage | Command:
         """
         同步工具调用包装：执行 handler，失败时返回错误 ToolMessage。
 
@@ -129,8 +129,8 @@ class ToolErrorMiddleware(AgentMiddleware):
             )
             # 将异常信息作为 ToolMessage 内容返回，使 Agent 能看到错误详情
             return ToolMessage(
-                tool_call_id=request.tool_call_id,
-                content=f"Tool call error: {e}",
+                content=json.dumps(_build_error_payload(e, request), ensure_ascii=False),
+                tool_call_id=_tool_call_id(request),
                 status="error",
             )
 
@@ -140,8 +140,8 @@ class ToolErrorMiddleware(AgentMiddleware):
     async def awrap_tool_call(
             self,
             request: ToolCallRequest,
-            handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
-    ) -> ToolMessage | Command[Any]:
+            handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
+    ) -> ToolMessage | Command:
         """
         异步工具调用包装：执行 handler，失败时返回错误 ToolMessage。
 

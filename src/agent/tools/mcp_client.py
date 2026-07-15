@@ -26,7 +26,7 @@ MCP_SERVER_CONFIG = {
     },
     # 魔塔社区分析 API： 提供可视化和图表生成工具
     "analysis": {
-        "url": "https://mcp.api-inference.modelscope.net/af3893df5be041/mcp",
+        "url": "https://mcp.api-inference.modelscope.net/90349db99eef45/mcp",
         "transport": "streamable_http",
     }
 }
@@ -49,7 +49,7 @@ CHART_TOOL_PREFIXES = ("generate_",)
 # =============================================================================
 # ★ 3. 核心函数 —— 加载 MCP 工具并分组
 # =============================================================================
-async def load_mcp_tools(server_config: dict | None = None) -> Tuple[list, list, list, list]:
+async def load_mcp_tools(server_config: dict | None = None) -> Tuple[List, List, List, List]:
     """
     连接到所有 MCP Server ，加载全部工具并分组。
 

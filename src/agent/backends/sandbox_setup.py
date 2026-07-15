@@ -27,6 +27,7 @@ from opensandbox import SandboxSync
 
 from agent.backends.custom_opensandbox import OpenSandboxBackend
 from agent.config import LOCAL_SKILLS_DIR, SANDBOX_SKILLS_ROOT
+from agent.env_utils import OPENSANDBOX_API_KEY
 
 
 # =============================================================================
@@ -38,7 +39,7 @@ def setup_sandbox(config, sandbox_id=None, image=None) -> OpenSandboxBackend:
     获取或创建一个沙箱实例
 
     执行顺序：
-    1.若提供 sandbox_id，尝试连接已有沙箱；连接失败则创建新沙箱
+    1. 若提供 sandbox_id，尝试连接已有沙箱；连接失败则创建新沙箱
     2. 预创建运行时所需目录 （_ensure_dirs）
     3. 上传技能文件到沙箱（_send_files）
     4. 创建 Python venv 并预装依赖 （_create_venv_）
@@ -46,7 +47,7 @@ def setup_sandbox(config, sandbox_id=None, image=None) -> OpenSandboxBackend:
     Args:
         config: ConnectionConfigSync 配置
         sandbox_id: 可选，要连接的现有 沙箱Id
-        image: 可循啊，创建新沙箱时使用的镜像。
+        image: 可选，创建新沙箱时使用的镜像。
 
     Returns:
         OpenSandboxBackend: 沙箱实例
@@ -66,6 +67,8 @@ def setup_sandbox(config, sandbox_id=None, image=None) -> OpenSandboxBackend:
             image = "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.0.2"
 
         print(f"[INFO] 正在创建新沙箱,使用镜像: {image}")
+        # 内网的 OpenSandbox 服务的 API Key
+        config.api_key = OPENSANDBOX_API_KEY
         sandbox = SandboxSync.create(
             image,
             entrypoint=["/opt/opensandbox/code-interpreter.sh"],
@@ -82,18 +85,18 @@ def setup_sandbox(config, sandbox_id=None, image=None) -> OpenSandboxBackend:
             # )
         )
 
-        backend = OpenSandboxBackend(sandbox=sandbox)
-        print(f"[INFO] 沙箱就绪，ID：{sandbox.id}")
+    backend = OpenSandboxBackend(sandbox=sandbox)
+    print(f"[INFO] 沙箱就绪，ID：{sandbox.id}")
 
-        # 预创建 skills 需要的目录，避免 Agent 运行时遇到 FileNotFoundError
-        _ensure_dirs(backend)
+    # 预创建 skills 需要的目录，避免 Agent 运行时遇到 FileNotFoundError
+    _ensure_dirs(backend)
 
-        _send_files(backend)
+    _send_files(backend)
 
-        # 创建 Python venv + 预装第三方依赖
-        _create_venv(backend)
+    # 创建 Python venv + 预装第三方依赖
+    _create_venv(backend)
 
-        return backend
+    return backend
 
 
 # =============================================================================

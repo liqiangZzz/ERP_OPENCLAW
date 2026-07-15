@@ -37,6 +37,11 @@ _warm_reserve: SandboxBackendProxy | None = None
 # 预热沙箱操作的异步锁，防止并发竞争
 _warm_lock = asyncio.Lock()
 
+# MongoDB 客户端连接实例
+_mongo_client: MongoClient | None = None
+# MongoDB 集合引用（初始化后赋值）
+_collection = None
+
 
 # =============================================================================
 # ★ 3. 内部辅助函数
@@ -89,7 +94,7 @@ async def pre_warm() -> None:
     try:
         from agent.backends.sandbox_setup import setup_sandbox
 
-        sandbox_backend = await  asyncio.to_thread(setup_sandbox, SANDBOX_CONFIG)
+        sandbox_backend = await asyncio.to_thread(setup_sandbox, SANDBOX_CONFIG)
         _warm_reserve = SandboxBackendProxy(sandbox_backend)
         logger.info("沙箱预热就绪：%s", sandbox_backend.id)
     except Exception:
@@ -147,7 +152,8 @@ async def ensure_sandbox_for_user(user_id: str) -> SandboxBackendProxy:
                         "sandbox_id": sandbox_id,
                         "updated_at": datetime.now(timezone.utc),
                         "created_at": datetime.now(timezone.utc),
-                    }},
+                    }
+                },
                 upsert=True
             )
             logger.info("用户 %s 认领预热沙箱: %s", user_id, sandbox_id)
@@ -168,7 +174,7 @@ async def ensure_sandbox_for_user(user_id: str) -> SandboxBackendProxy:
         from agent.backends.sandbox_setup import setup_sandbox
         try:
             # setup_sandbox 返回的是 OpenSandboxBackend 实例
-            reconnected_backend = await asyncio.to_thread(
+            sandbox_backend = await asyncio.to_thread(
                 setup_sandbox, SANDBOX_CONFIG, sandbox_id=sandbox_id
             )
         except Exception:
@@ -176,16 +182,16 @@ async def ensure_sandbox_for_user(user_id: str) -> SandboxBackendProxy:
             # 重连失败，创建新沙箱
             return await _create_sandbox_for_user(user_id)
 
-        # 验证���连的沙箱是否可达
+        # 验证连接沙箱是否可达
         try:
-            reconnected_backend.execute("echo ok")
+            await asyncio.to_thread(sandbox_backend.execute, "echo ok")
         except Exception:
             logger.warning("已连接的沙箱 %s 不可达，创建新沙箱", sandbox_id)
             # 沙箱不可达，标记重建（原沙箱 ID 会由 _recreate_sandbox 尝试删除）
             return await _recreate_sandbox(user_id, None)
 
         # 重连成功，包装为 Proxy 并缓存
-        proxy = SandboxBackendProxy(reconnected_backend)
+        proxy = SandboxBackendProxy(sandbox_backend)
         SANDBOX_BACKENDS[user_id] = proxy
         _sandbox_collection().update_one(
             {"user_id": user_id},
@@ -254,7 +260,7 @@ async def cleanup_user(user_id: str) -> None:
             logger.warning("删除沙箱 %s 失败", proxy.id, exc_info=True)
 
     _sandbox_collection().delete_one({"user_id": user_id})
-    logger.info("已删除用户 %s 的沙箱 %s", user_id, proxy.id if proxy else "N/A")
+    logger.info("用户 %s 沙箱已清理", user_id)
 
 
 async def shutdown() -> None:
@@ -315,11 +321,13 @@ async def _create_sandbox_for_user(user_id: str) -> SandboxBackendProxy:
 
     _sandbox_collection().update_one(
         {"user_id": user_id},
-        {"$set": {
-            "sandbox_id": sandbox_id,
-            "updated_at": datetime.now(timezone.utc),
-            "created_at": datetime.now(timezone.utc),
-        }},
+        {
+            "$set": {
+                "sandbox_id": sandbox_id,
+                "updated_at": datetime.now(timezone.utc),
+                "created_at": datetime.now(timezone.utc),
+            }
+        },
         upsert=True
     )
     logger.info("用户 %s 沙箱创建完成： %s", user_id, sandbox_id)
@@ -368,10 +376,12 @@ async def _recreate_sandbox(
 
     _sandbox_collection().update_one(
         {"user_id": user_id},
-        {"$set": {
-            "sandbox_id": sandbox_id,
-            "updated_at": datetime.now(timezone.utc),
-        }}
+        {
+            "$set": {
+                "sandbox_id": sandbox_id,
+                "updated_at": datetime.now(timezone.utc),
+            }
+        }
     )
 
     logger.info("用户 %s 沙箱重建完成: %s", user_id, sandbox_id)

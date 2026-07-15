@@ -6,8 +6,6 @@
 """
 from datetime import timezone, datetime
 
-from langchain_core.tools import tool
-
 from agent.config import SCOPE_MAP
 
 
@@ -26,6 +24,7 @@ def create_assign_skill_tool(sandbox_backend, store, skills_namespace):
     Returns:
         assign_skill 工具函数（异步）。
     """
+    from langchain_core.tools import tool
 
     # =============================================================================
     # ★ 2. 工具定义 —— assign_skill
@@ -67,7 +66,7 @@ def create_assign_skill_tool(sandbox_backend, store, skills_namespace):
 
         # 3.复制到目标 scope 目录（主Agent 已就位，跳过复制）
         if agent_name == "main":
-            return f"技能 '{skill_name}' 已就位，跳过复制。"
+            cp_result = "（主 Agent 技能已就位，无需移动）"
         else:
             result = sandbox_backend.execute(
                 f"mkdir -p {target_dir} && cp -r {source_dir}/* {target_dir}/"
@@ -117,18 +116,18 @@ async def _persist_skill(sandbox_backend, store, namespace, skill_name: str, sco
     # 列出源目录下所有文件
     ls_result = sandbox_backend.execute(f"find {source_dir} -type f")
     if ls_result.exit_code != 0:
-        return f"错误：列出文件失败:\n{ls_result.output}"
+        return f"⚠️ 持久化失败：无法列出 {source_dir}/ 下的文件"
 
     file_paths = [p.strip() for p in ls_result.output.strip().split("\n") if p.strip()]
     if not file_paths:
-        return f"错误：源目录 {source_dir} 下无文件。"
+        return "⚠️ 持久化跳过：源目录为空"
 
     persisted_count = 0
     for sandbox_path in file_paths:
         # 计算相对路径→ StoreBackend key
         # 例如 /skills/main/web-fetcher/SKILL.md → /main/web-fetcher/SKILL.md
         rel = sandbox_path[len(f"/skills/main/"):]
-        store_key = f"{scope}/{rel}"
+        store_key = f"/{scope}/{rel}"
 
         # 读取文件内容
         try:
@@ -149,7 +148,7 @@ async def _persist_skill(sandbox_backend, store, namespace, skill_name: str, sco
                 {
                     "content": [content_str],
                     "created_at": now,
-                    "updated_at": now,
+                    "modified_at": now,
                 }
             )
             persisted_count += 1

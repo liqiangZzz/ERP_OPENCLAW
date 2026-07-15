@@ -17,7 +17,7 @@ from typing import List, Optional, Dict, Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage
 
 logger = logging.getLogger(__name__)
 
@@ -150,21 +150,21 @@ async def _extract_entities(model: BaseChatModel, user_message: str, ai_summary:
     """
     prompt = f"""Extract procurement-related entities from this conversation.
 
-    Rules:
-    1. "suppliers": Company/supplier names mentioned. Include both Chinese and English names. Empty list if none.
-    2. "query": One-line summary of the user's procurement need. Empty string if not procurement-related.
+Rules:
+1. "suppliers": Company/supplier names mentioned. Include both Chinese and English names. Empty list if none.
+2. "query": One-line summary of the user's procurement need. Empty string if not procurement-related.
 
-    User message: {user_message}
+User message: {user_message}
 
-    Assistant response summary: {ai_summary}
+Assistant response summary: {ai_summary}
 
-    Return ONLY a JSON object, no other text:
-    {{"suppliers": ["CompanyA", "CompanyB"], "query": "brief summary"}}"""
+Return ONLY a JSON object, no other text:
+{{"suppliers": ["CompanyA", "CompanyB"], "query": "brief summary"}}"""
 
     try:
-        response = await model.ainvoke([HumanMessage(content=prompt)])
+        response = await model.ainvoke(prompt)
 
-        # 从 LLM 回复中提取纯文本（兼容列表和字符串两种 content 格式）
+        # 从回复中提取 JSON
         text = response.content
         if isinstance(text, list):
             text = " ".join(
@@ -297,11 +297,11 @@ class MemoryUpdateMiddleware(AgentMiddleware):
             # ── 步骤 6：从 StoreBackend 读取当前偏好文件 ──
             store = getattr(runtime, "store", None)
             if store is None:
-                logger.warning("MemoryUpdateMiddleware: 无法获取存储后端，跳过记忆更新")
+                logger.warning("MemoryUpdateMiddleware: runtime.store 不可用")
                 return None
 
             namespace = (user_id,)  # store 命名空间按用户隔离
-            key = f"+{user_id}/preferences.md"  # "+" 前缀标识为文件类型条目
+            key = f"/{user_id}/preferences.md"
 
             try:
                 item = await store.get(namespace, key)
@@ -317,7 +317,7 @@ class MemoryUpdateMiddleware(AgentMiddleware):
                     # dict 格式：content 字段为行列表或字符串
                     content = value.get("content", [])
                     if isinstance(content, list):
-                        current_lines = [line for line in content if isinstance(line, str)]
+                        current_lines = [str(line) for line in content]
                     elif isinstance(content, str):
                         current_lines = content.split("\n")
                 elif isinstance(value, str):
@@ -340,11 +340,12 @@ class MemoryUpdateMiddleware(AgentMiddleware):
 
         return None
 
+
 # =============================================================================
 # ★ 7. 辅助函数 —— 合并偏好数据
 # =============================================================================
 def _merge_preferences(
-    current_lines: List[str], new_suppliers: List[str], new_query: str
+        current_lines: List[str], new_suppliers: List[str], new_query: str
 ) -> str:
     """将新的 suppliers/query 合并到现有偏好内容中。
 
@@ -438,7 +439,7 @@ def _merge_preferences(
     for s in existing_suppliers:
         if s not in merged_suppliers:
             merged_suppliers.append(s)
-    merged_suppliers = merged_suppliers[:10]
+    merged_suppliers = merged_suppliers[:10] # 最多保留 10 个供应商
 
     # 查询摘要：新的排在前面，旧的追加在后面，去重后最多保留 5 条
     merged_queries = [new_query] if new_query else []

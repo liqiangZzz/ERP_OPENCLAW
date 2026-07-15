@@ -15,7 +15,6 @@ from typing import Any, Optional, Dict
 
 from langchain.agents.middleware import AgentMiddleware
 
-from agent.backends.sandbox_manager import recreate_user_sandbox
 from agent.backends.sandbox_proxy import SandboxBackendProxy
 
 logger = logging.getLogger(__name__)
@@ -114,8 +113,10 @@ class SandboxHealthMiddleware(AgentMiddleware):
         1. 重建沙箱（skills + venv）
         2. 再上传种子文件。
         """
-        await  recreate_user_sandbox(self.user_id)
-        await  asyncio.to_thread(
+        from agent.backends.sandbox_manager import recreate_user_sandbox
+
+        await recreate_user_sandbox(self.user_id)
+        await asyncio.to_thread(
             self._backend.upload_files,
             [("/AGENTS.md", self._agents_md)]
         )

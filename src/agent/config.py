@@ -1,5 +1,4 @@
 from datetime import timedelta
-import os
 from pathlib import Path
 
 import httpx
@@ -10,7 +9,8 @@ from langgraph.store.memory import InMemoryStore
 from opensandbox.config import ConnectionConfigSync
 from pymongo import MongoClient
 
-from agent.env_utils import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, GLM_BASE_URL, GLM_API_KEY, QWEN_BASE_URL, QWEN_API_KEY
+from agent.env_utils import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, GLM_BASE_URL, GLM_API_KEY, QWEN_BASE_URL, QWEN_API_KEY, \
+    SANDBOX_DOMAIN, OPENSANDBOX_API_KEY
 
 # =============================================================================
 # ★ 1. 模型配置 —— 主模型、摘要模型、备用模型
@@ -62,11 +62,9 @@ FALLBACK_MODEL = init_chat_model(
 # =============================================================================
 # ★ 2. 沙箱配置 —— OpenSandbox 连接配置
 # =============================================================================
-# 从环境变量读取沙箱配置，生产环境应设置 SANDBOX_DOMAIN
-_sandbox_domain = os.getenv("SANDBOX_DOMAIN", "http://localhost:8080")
-
 SANDBOX_CONFIG = ConnectionConfigSync(
-    domain=_sandbox_domain,
+    domain=SANDBOX_DOMAIN,
+    api_key=OPENSANDBOX_API_KEY,
     use_server_proxy=True,
     request_timeout=timedelta(seconds=60),
     transport=httpx.HTTPTransport(limits=httpx.Limits(max_connections=20)),
@@ -75,8 +73,7 @@ SANDBOX_CONFIG = ConnectionConfigSync(
 # =============================================================================
 # ★ 3. 路径常量 —— 项目路径、沙箱路径、本地路径
 # =============================================================================
-# ★ 项目 src 根目录（所有本地路径常量的基路径）
-EXAMPLE_DIR = Path(__file__).resolve().parent.parent
+EXAMPLE_DIR = Path(__file__).parent.parent
 # ★ 沙箱内技能根路径
 SANDBOX_SKILLS_ROOT = "/skills"
 # ★ 沙箱内记忆根路径（用户私有记忆存放处）
@@ -119,24 +116,11 @@ SCOPE_MAP = {
     "procurement-order": "order",
 }
 
-
 # =============================================================================
 # ★ 6. MongoDB 配置 —— 用于持久化 Agent 短期记忆/checkpoint
 # =============================================================================
-# 从环境变量读取 MongoDB 配置，生产环境应设置以下环境变量：
-# MONGODB_HOST, MONGODB_PORT, MONGODB_USER, MONGODB_PASSWORD, MONGODB_DB
-_mongodb_host = os.getenv("MONGODB_HOST", "localhost")
-_mongodb_port = int(os.getenv("MONGODB_PORT", "27017"))
-_mongodb_user = os.getenv("MONGODB_USER", "")
-_mongodb_password = os.getenv("MONGODB_PASSWORD", "")
-_mongodb_db = os.getenv("MONGODB_DB", "langchain_db")
-
-if _mongodb_user and _mongodb_password:
-    MONGODB_URI = f"mongodb://{_mongodb_user}:{_mongodb_password}@{_mongodb_host}:{_mongodb_port}/?authSource=admin"
-else:
-    MONGODB_URI = f"mongodb://{_mongodb_host}:{_mongodb_port}/"
-
-MONGODB_DB_NAME = _mongodb_db
+MONGODB_URI = "mongodb://root:root@localhost:27017/?authSource=admin"
+MONGODB_DB_NAME = "langchain_db"
 MONGODB_CHECKPOINT_COLLECTION = "checkpoints"
 
 # =============================================================================

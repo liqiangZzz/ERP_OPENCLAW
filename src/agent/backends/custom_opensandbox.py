@@ -18,7 +18,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable
 from typing import cast
@@ -91,7 +90,7 @@ class OpenSandboxBackend(BaseSandbox):
         # sandbox.kill() 手动关闭沙箱
         self.default_timeout = timeout
 
-        # 处理轮训策略：若传入的事数字则包装为常量函数，否则直接使用
+        # 处理轮训策略：若传入的是数字则包装为常量函数，否则直接使用
         if callable(sync_polling_interval):
             polling_strategy = cast("PollingStrategy", sync_polling_interval)
         else:
@@ -108,126 +107,182 @@ class OpenSandboxBackend(BaseSandbox):
         logger.debug(f"获取沙盒 ID: {sandbox_id}")
         return sandbox_id
 
+    # 沙箱中非交互式 shell 不会加载 /etc/profile，需要手动注入环境变量
+    # 包含 skills-venv、Python、Go、Node.js、Java 等运行时路径
+    SANDBOX_PATH = (
+        "/opt/skills-venv/bin:"
+        "/opt/python/versions/cpython-3.11.14-linux-x86_64-gnu/bin:"
+        "/opt/go/1.25.5/bin:"
+        "/opt/node/v22.2.0/bin:"
+        "/usr/lib/jvm/java-21-openjdk-amd64/bin:"
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    )
+
     # =============================================================================
     # ★ 4. 核心方法实现：execute / upload / download
     # =============================================================================
-    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
-        """
-        执行 Shell 命令（同步）。
+    def execute(
+            self,
+            command: str,
+            *,
+            timeout: int | None = None,
+    ) -> ExecuteResponse:
+        """在沙盒内部执行一条 Shell 命令。
 
-        封装 OpenSandbox SDK 的 run 方法，处理超时和错误转换。
-        自动注入 SANDBOX_PATH 环境变量，确保非交互式 shell 能找到 pip/python。
+        执行前会自动注入 PATH 环境变量，确保命令能找到正确的可执行文件。
 
-        Args:
-            command: 要执行的 shell 命令。
-            timeout: 超时时间（秒），默认使用 self.default_timeout。
+        Args：
+            command：要执行的 Shell 命令字符串。
+            timeout：等待命令完成的最大时间（秒）。
+                如果为 None，则使用后端默认的超时时间。
 
         Returns:
-            ExecuteResponse: 包含 exit_code、output 等字段。
+            ExecuteResponse 对象，包含标准输出、错误输出、退出码等信息。
         """
-        timeout = timeout or self.default_timeout
-        logger.debug(f"执行命令: {command[:100]}...")
+        effective_timeout = timeout if timeout is not None else self._default_timeout
+        # 非交互式 shell 不会 source /etc/profile，需要注入 PATH 确保 pip/python 可用
+        wrapped = f'export PATH="{self.SANDBOX_PATH}:$PATH" && {command}'
+        logger.debug(f"准备执行命令：{command[:100]}...（超时时间={effective_timeout}秒）")
+        return self._execute_command(wrapped, timeout=effective_timeout)
 
-        # 执行命令，返回 ExecuteResponse
-        try:
-            # OpenSandbox SDK 的 run 方法返回结果
-            result = self._sandbox.run(command, timeout=timeout)
+    def _execute_command(
+            self,
+            command: str,
+            *,
+            timeout: int,
+    ) -> ExecuteResponse:
+        """使用 OpenSandbox 的 API 执行命令。
 
-            return ExecuteResponse(
-                exit_code=result.exit_code or 0,
-                output=result.output or "",
-                error=result.error,
-            )
-        except Exception as e:
-            logger.error(f"命令执行失败: {e}")
-            return ExecuteResponse(
-                exit_code=-1,
-                output="",
-                error=str(e),
-            )
-
-    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
-        """
-        执行 Shell 命令（异步）。
-
-        通过 asyncio.to_thread 将同步调用转为异步，避免阻塞事件循环。
+        处理命令执行的完整流程：调用 OpenSandbox SDK、解析输出、处理异常。
+        超时情况下返回 exit_code=124 的标准退出码。
 
         Args:
-            command: 要执行的 shell 命令。
+            command: 要执行的命令（已包含 PATH 注入）。
             timeout: 超时时间（秒）。
 
         Returns:
-            ExecuteResponse: 执行结果。
+            ExecuteResponse 对象。
         """
-        return await asyncio.to_thread(self.execute, command, timeout=timeout)
+        try:
+            logger.debug(f"通过 OpenSandbox API 执行命令：{command}")
+            result = self._sandbox.commands.run(command)
+            logger.debug(f"命令执行完成，退出码：{result.exit_code}")
 
-    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-        """
-        上传文件到沙箱（同步）。
+            # 提取标准输出与标准错误
+            stdout = ""
+            stderr = ""
 
-        将 (沙箱路径, 文件内容字节) 元组列表批量上传到沙箱。
+            if result.logs.stdout:
+                stdout = "\n".join([log.text for log in result.logs.stdout])
+                logger.debug(f"命令标准输出长度：{len(stdout)} 字符")
 
-        Args:
-            files: [(sandbox_path, content), ...] 格式的列表。
+            if result.logs.stderr:
+                stderr = "\n".join([log.text for log in result.logs.stderr])
+                logger.debug(f"命令标准错误长度：{len(stderr)} 字符")
 
-        Returns:
-            list[FileUploadResponse]: 每个文件的 upload 结果。
-        """
-        results = []
-        for path, content in files:
-            try:
-                # OpenSandbox SDK 的 write 方法
-                write_entry = WriteEntry(path=path, content=content)
-                self._sandbox.write(write_entry)
-                results.append(FileUploadResponse(
-                    path=path,
-                    success=True,
-                    error=None,
-                ))
-            except Exception as e:
-                logger.warning(f"文件上传失败 {path}: {e}")
-                results.append(FileUploadResponse(
-                    path=path,
-                    success=False,
-                    error=str(e),
-                ))
-        return results
+            # 合并输出：stdout 为主体，stderr 附加在 <stderr> 标签中
+            output = stdout
+            if stderr and stderr.strip():
+                output += f"\n<stderr>{stderr.strip()}</stderr>"
 
-    async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-        """上传文件到沙箱（异步）。"""
-        return await asyncio.to_thread(self.upload_files, files)
+            logger.info(f"命令执行成功，退出码：{result.exit_code or 0}")
+            return ExecuteResponse(
+                output=output,
+                exit_code=result.exit_code or 0,
+                truncated=False,
+            )
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"执行命令时发生错误：{error_msg}", exc_info=True)
+
+            if "timeout" in error_msg.lower():
+                logger.warning(f"命令在 {timeout} 秒后超时")
+                return ExecuteResponse(
+                    output=f"命令在 {timeout} 秒后超时",
+                    exit_code=124,  # Linux 标准超时退出码
+                    truncated=False,
+                )
+
+            return ExecuteResponse(
+                output=f"执行命令时出错：{error_msg}",
+                exit_code=1,
+                truncated=False,
+            )
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        """
-        从沙箱下载文件（同步）。
+        """从沙箱下载指定文件。
 
-        批量下载沙箱中的文件到本地。
+        逐个读取文件内容，若文件不存在或路径不合法则记录错误而不中断。
 
         Args:
-            paths: 要下载的沙箱文件路径列表。
+            paths: 沙箱中的绝对文件路径列表。
 
         Returns:
-            list[FileDownloadResponse]: 每个文件的 download 结果。
+            与 paths 顺序对应的响应列表，包含文件内容或错误信息。
         """
-        results = []
-        for path in paths:
-            try:
-                # OpenSandbox SDK 的 read 方法
-                content = self._sandbox.read(path)
-                results.append(FileDownloadResponse(
-                    path=path,
-                    content=content,
-                    error=None,
-                ))
-            except Exception as e:
-                logger.warning(f"文件下载失败 {path}: {e}")
-                results.append(FileDownloadResponse(
-                    path=path,
-                    content=None,
-                    error=str(e),
-                ))
-        return results
+        responses: list[FileDownloadResponse] = []
 
-    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        """从沙箱下载文件（异步）。"""
-        return await asyncio.to_thread(self.download_files, paths)
+        for path in paths:
+            if not path.startswith("/"):
+                responses.append(
+                    FileDownloadResponse(path=path, content=None, error="invalid_path")
+                )
+                continue
+            try:
+                content = self._sandbox.files.read_file(path)
+                # 统一转为 bytes
+                content_bytes = content.encode("utf-8") if isinstance(content, str) else content
+                responses.append(
+                    FileDownloadResponse(path=path, content=content_bytes, error=None)
+                )
+            except Exception:
+                responses.append(
+                    FileDownloadResponse(path=path, content=None, error="file_not_found")
+                )
+
+        return responses
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        """上传文件到沙箱。
+
+        批量构建写入条目后一次性提交。若提交失败，将所有已准备但未写入的条目标记为错误。
+
+        Args:
+            files: 每个元素为 (绝对路径, 文件内容字节) 的元组列表。
+
+        Returns:
+            与 files 顺序对应的响应列表，包含操作错误信息（成功时为 None）。
+        """
+        responses: list[FileUploadResponse] = []
+        upload_entries: list[WriteEntry] = []
+
+        for path, content in files:
+            if not path.startswith("/"):
+                responses.append(FileUploadResponse(path=path, error="invalid_path"))
+                continue
+            try:
+                # 将 bytes 转换为字符串用于写入
+                if isinstance(content, bytes):
+                    try:
+                        content_str = content.decode("utf-8")
+                    except UnicodeDecodeError:
+                        # UTF-8 解码失败时降级使用 latin-1（兼容任意字节序列）
+                        content_str = content.decode("latin-1")
+                else:
+                    content_str = str(content)
+                upload_entries.append(WriteEntry(path=path, data=content_str, mode=0o644))
+                responses.append(FileUploadResponse(path=path, error=None))
+            except Exception as e:
+                responses.append(FileUploadResponse(path=path, error=str(e)))
+
+        if upload_entries:
+            try:
+                self._sandbox.files.write_files(upload_entries)
+            except Exception as e:
+                # 若写操作失败，将所有成功准备但未真正上传的条目标记为错误
+                for resp in responses:
+                    if resp.error is None:
+                        resp.error = f"upload_failed: {e}"
+
+        return responses

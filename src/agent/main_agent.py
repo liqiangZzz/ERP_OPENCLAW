@@ -289,14 +289,15 @@ async def create_main_agent(
         SkillsSyncMiddleware(sandbox_backend),
         # 5. 持久化技能恢复（StoreBackend → 沙箱）
         UserSkillsRestoreMiddleware(sandbox_backend, SKILLS_STORE_NAMESPACE),
-        # 6. todo 对话摘要
+        # 6. 对话摘要
         build_summarization_middleware(backend_factory, SUMMARY_MODEL),
         # 7. 用户记忆更新
         MemoryUpdateMiddleware(model=SUMMARY_MODEL),
         # 8. 沙箱熔断：连续沙箱错误 ≥ 阈值 → jump_to=end
         SandboxCircuitBreakerMiddleware(),
-        # 9. 调用限制
+        # 9. 模型调用限制
         ModelCallLimitMiddleware(run_limit=50),
+        # 10. 工具调用限制
         ToolCallLimitMiddleware(run_limit=200),
     ]
 

@@ -63,7 +63,7 @@ class UserSkillsRestoreMiddleware(AgentMiddleware):
         files = await self._collect_skills(store)
         if files:
             # 批量上传到沙箱，使子 Agent 可通过 /skills/ 路径访问
-            await self.backend.upload_files(files)
+            await self.backend.aupload_files(files)
 
         return None
 

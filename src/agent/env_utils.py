@@ -45,3 +45,7 @@ QWEN_BASE_URL = os.getenv('QWEN_BASE_URL')
 LOCAL_BASE_URL = os.getenv('LOCAL_BASE_URL')
 DAYTONA_API_KEY = os.getenv('DAYTONA_API_KEY')
 DAYTONA_BASE_URL = os.getenv('DAYTONA_BASE_URL')
+
+# 内网的 OpenSandbox 服务的 API Key
+SANDBOX_DOMAIN = os.getenv("SANDBOX_DOMAIN", "http://192.168.0.188:8080")
+OPENSANDBOX_API_KEY = os.environ.get("OPENSANDBOX_API_KEY", "123456")

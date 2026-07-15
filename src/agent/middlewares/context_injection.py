@@ -82,5 +82,5 @@ class ContextInjectionMiddleware(AgentMiddleware):
               包含注入消息的字典 {"messages":[SystemMessage(...)]},
               若 context 不可用或无 user_id 则返回 None。
         """
-
+        # 与同步版本逻辑相同
         return self.before_agent(state, runtime)

@@ -106,3 +106,49 @@ class DeleteSessionResponse(BaseModel):
     """删除会话响应模式"""
     success: bool = Field(True, description="是否成功")
     message: str = Field("会话已删除", description="响应消息")
+
+
+# ============================================================
+# SSE 流式事件模型
+# ============================================================
+
+class StreamTokenEvent(BaseModel):
+    """Token 事件 - AI 生成的文本片段"""
+    type: str = "token"
+    content: str = Field(..., description="文本内容")
+    source: str = Field("main", description="来源: main 或子代理名称")
+
+
+class StreamToolStartEvent(BaseModel):
+    """工具开始调用事件"""
+    type: str = "tool_start"
+    tool_call_id: str = Field(..., description="工具调用 ID")
+    tool_name: str = Field(..., description="工具名称")
+    source: str = Field("main", description="来源")
+
+
+class StreamToolArgsEvent(BaseModel):
+    """工具参数事件"""
+    type: str = "tool_args"
+    args: str = Field(..., description="工具参数字符串")
+
+
+class StreamToolResultEvent(BaseModel):
+    """工具执行结果事件"""
+    type: str = "tool_result"
+    tool_name: str = Field(..., description="工具名称")
+    result: str = Field(..., description="执行结果")
+    source: str = Field("main", description="来源")
+
+
+class StreamDoneEvent(BaseModel):
+    """流结束事件"""
+    type: str = "done"
+    thread_id: str = Field(..., description="会话 ID")
+    content: str = Field("", description="完整回复内容")
+
+
+class StreamErrorEvent(BaseModel):
+    """错误事件"""
+    type: str = "error"
+    message: str = Field(..., description="错误信息")

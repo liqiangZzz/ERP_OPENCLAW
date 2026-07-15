@@ -4,7 +4,6 @@
 在每个 Agent 运行周期开始前，将本地 src/skills/ 下的技能文件与沙箱同步。
 检测到变化时，向对话中插入系统通知，提醒 Agent 有新技能可用。
 """
-import asyncio
 import hashlib
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
@@ -63,6 +62,7 @@ class SkillsSyncMiddleware(AgentMiddleware):
              Returns：
                    若有技能更新，返回包含 SystemMessage 通知的字典；否则返回 None。
         """
+        import asyncio
         loop = asyncio.get_running_loop()
         new_skills = await loop.run_in_executor(None, self._sync_files)
         if new_skills:
@@ -115,37 +115,37 @@ class SkillsSyncMiddleware(AgentMiddleware):
                 with open(local_file, "rb") as f:
                     local_content = f.read()
 
-                    # 计算 MD5，用于快速判断文件是否有变动
-                    local_hash = hashlib.md5(local_content).hexdigest()
-                    cache_key = f"{skill_name}/{relative_path}"
+                # 计算 MD5，用于快速判断文件是否有变动
+                local_hash = hashlib.md5(local_content).hexdigest()
+                cache_key = f"{skill_name}/{relative_path}"
 
-                    # 【快速跳过】本地哈希与上次同步的缓存一致 → 文件未变，直接跳过
-                    if self._last_hashes.get(cache_key) == local_hash:
-                        continue
+                # 【快速跳过】本地哈希与上次同步的缓存一致 → 文件未变，直接跳过
+                if self._last_hashes.get(cache_key) == local_hash:
+                    continue
 
-                    # 【慢速对比】缓存未命中，需要和沙箱侧实际文件对比
-                    # 先 test -f 判断文件是否存在，避免 download_file 对 404 打 ERROR 日志
-                    check = self.backend.execute(f"test -f {sandbox_path}")
-                    if check.exit_code == 0:
-                        try:
-                            results = self.backend.download_files([sandbox_path])
-                            if results and results[0].content and not results[0].error:
-                                remote_content = results[0].content
-                                # 统一为 bytes 再计算哈希
-                                if isinstance(remote_content, str):
-                                    remote_content = remote_content.encode("utf-8")
-                                remote_hash = hashlib.md5(remote_content).hexdigest()
-                                # 沙箱文件内容一致 → 无需上传，刷新缓存后跳过
-                                if remote_hash == local_hash:
-                                    self._last_hashes[cache_key] = local_hash
-                                    continue
-                        except Exception:
-                            pass  # 下载/读取失败，保守策略：视为需要上传
+                # 【慢速对比】缓存未命中，需要和沙箱侧实际文件对比
+                # 先 test -f 判断文件是否存在，避免 download_file 对 404 打 ERROR 日志
+                check = self.backend.execute(f"test -f {sandbox_path}")
+                if check.exit_code == 0:
+                    try:
+                        results = self.backend.download_files([sandbox_path])
+                        if results and results[0].content and not results[0].error:
+                            remote_content = results[0].content
+                            # 统一为 bytes 再计算哈希
+                            if isinstance(remote_content, str):
+                                remote_content = remote_content.encode("utf-8")
+                            remote_hash = hashlib.md5(remote_content).hexdigest()
+                            # 沙箱文件内容一致 → 无需上传，刷新缓存后跳过
+                            if remote_hash == local_hash:
+                                self._last_hashes[cache_key] = local_hash
+                                continue
+                    except Exception:
+                        pass  # 下载/读取失败，保守策略：视为需要上传
 
-                    # 走到这里说明：新增文件 / 本地已修改 / 沙箱读取失败 → 加入上传队列
-                    file_to_upload.append((sandbox_path, local_content))
-                    self._last_hashes[cache_key] = local_hash
-                    has_changes = True
+                # 走到这里说明：新增文件 / 本地已修改 / 沙箱读取失败 → 加入上传队列
+                file_to_upload.append((sandbox_path, local_content))
+                self._last_hashes[cache_key] = local_hash
+                has_changes = True
 
             # ── 本技能包遍历完毕，统一上传所有变更文件 ──
             if has_changes:

@@ -18,7 +18,7 @@ create_deep_agent() 所需的 SubAgent dict 格式。
     → resolve_subagent_tools() + MCP 工具 → 可传入 create_deep_agent 的 SubAgent 列表
 """
 from pathlib import Path
-from typing import Any, Optional, List, Dict
+from typing import Optional, List, Dict
 
 import yaml
 
@@ -65,18 +65,17 @@ def load_subagent_configs(configs_dir: Optional[Path] = None, ) -> list[dict]:
         try:
             with open(yaml_file, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
-
-        except yaml.YAMLError as exc:
-            print(f"[ERROR] 解析 YAML 文件失败: {yaml_file}")
+        except yaml.YAMLError as e:
+            print(f"[ERROR] 解析 YAML 文件失败: {yaml_file} — {e}")
             continue
         except Exception as e:
-            print(f"[ERROR] 读取 YAML 文件失败: {yaml_file}")
+            print(f"[ERROR] 读取文件失败: {yaml_file} — {e}")
             continue
 
         # 校验必填字段
         missing = _validate_subagent_config(data, yaml_file.name)
         if missing:
-            print(f"[ERROR] 子 Agent 配置文件缺少必填字段: {yaml_file}")
+            print(f"[ERROR] {yaml_file.name} 缺少必填字段: {', '.join(missing)}")
             continue
 
         configs.append(data)
@@ -107,11 +106,11 @@ def resolve_subagent_tools(
     3. 去重后组装为 create_deep_agent() 可直接接收的 SubAgent 字典
 
 
-  Args:
-    configs: load_subagent_configs() 返回的原始配置列表。
-    available_tools: 可用的工具对象列表（来自 MCP 客户端）。
-    extra_middleware: 子 Agent 额外中间件，key 为子 Agent 名称，
-                      value 为中间件实例列表。
+    Args:
+        configs: load_subagent_configs() 返回的原始配置列表。
+        available_tools: 可用的工具对象列表（来自 MCP 客户端）。
+        extra_middleware: 子 Agent 额外中间件，key 为子 Agent 名称，
+                          value 为中间件实例列表。
 
     Returns:
         可以直接传入 create_deep_agent(subagents=...) 的 SubAgent 字典列表。
@@ -121,7 +120,7 @@ def resolve_subagent_tools(
 
     # 构建工具名 → 工具对象的索引字典，用于 O(1) 快速查找
     # key: 工具名称, value: 工具对象
-    tool_index: Dict[str, Any] = {}
+    tool_index: Dict[str, object] = {}
     for t in available_tools:
         name = getattr(t, "name", None)
         if name:
@@ -159,7 +158,7 @@ def resolve_subagent_tools(
         subagent: Dict = {
             "name": config["name"],
             # 去除 description 中的换行符，避免多行系统提示中出现额外空行
-            "description": config["description"].replace("\n", "").strip(),
+            "description": config["description"].replace("\n", " ").strip(),
             "system_prompt": config["system_prompt"],
             "tools": unique_tools,
         }
