@@ -18,9 +18,7 @@ from agent.env_utils import (
     MONGODB_DB_NAME,
     MONGODB_URI,
     OPENSANDBOX_API_KEY,
-    QWEN_API_KEY,
-    QWEN_BASE_URL,
-    SANDBOX_DOMAIN,
+    SANDBOX_DOMAIN, KIMI_BASE_URL, KIMI_API_KEY,
 )
 
 # =============================================================================
@@ -53,11 +51,11 @@ SUMMARY_MODEL = ChatOpenAI(
 
 # ★ 备用模型（当主模型故障时使用）
 FALLBACK_MODEL = init_chat_model(
-    "Qwen3.6-27B",
-    model_provider="openai",
+    "Kimi-K2.6",                # 改为 Kimi-K2.6
+    model_provider="openai",    # 如果平台兼容OpenAI接口则保留，否则需调整
     temperature=1.0,
-    base_url=QWEN_BASE_URL,
-    api_key=QWEN_API_KEY,
+    base_url=KIMI_BASE_URL,
+    api_key=KIMI_API_KEY,
     profile={
         "max_input_tokens": 128000,
         "max_output_tokens": 8192,
