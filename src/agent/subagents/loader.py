@@ -13,41 +13,42 @@ create_deep_agent() 所需的 SubAgent dict 格式。
     # 2. 与 MCP 工具匹配，解析为可调用的工具对象
     subagents = resolve_subagent_tools(raw_configs, all_mcp_tools)
 
-配置流程:
-    YAML 文件 → load_subagent_configs() → 原始配置字典列表
-    → resolve_subagent_tools() + MCP 工具 → 可传入 create_deep_agent 的 SubAgent 列表
+工具匹配规则：精确匹配优先（O(1) 索引），未命中再前缀匹配
+（如 "supplier_" 匹配所有 supplier_ 前缀的工具），均失败记 WARNING。
+刻意不支持任意子串匹配——子串匹配会把 YAML 中的工具名拼写错误
+静默"容错"掉，配置错误被吞掉后很难排查。
 """
+import logging
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Any, Dict, List, Optional
 
 import yaml
 
-# =============================================================================
-# ★ 1. 全局常量：CONFIGS_DIR
-# =============================================================================
-# 默认 YAML 配置文件目录（与 loader.py 同级下的 configs/ 文件夹）
+# 模块级 logger，与 main_agent 的日志体系统一
+logger = logging.getLogger(__name__)
+
+# 默认 YAML 配置目录（与 loader.py 同级的 configs/）
+# 每个业务子 Agent 一个 .yaml 文件，按文件名排序加载保证注册顺序稳定
 CONFIGS_DIR = Path(__file__).parent / "configs"
 
 
 # =============================================================================
-# ★ 2. 公开 API：load_subagent_configs
+# ★ 1. 公开 API：load_subagent_configs
 # =============================================================================
-def load_subagent_configs(configs_dir: Optional[Path] = None, ) -> list[dict]:
+def load_subagent_configs(configs_dir: Optional[Path] = None) -> List[Dict]:
     """
-    加载指定目录下所有 .yaml 子 Agent 配置文件
-    按文件名排序后依次读取每个 YAML 文件名，校验必填字段后返回。
-    若某个文件解析失败或缺少必填字段，跳过该文件并打印错误，继续处理下一个。
+    加载目录下所有 .yaml 子 Agent 配置，按文件名排序。
 
-    每个 YAML 文件的顶级结构：
+    容错策略：单个文件解析失败或缺少必填字段时跳过并记日志，
+    不让一个坏文件阻断整个 Agent 启动。
+
+    YAML 顶级结构：
         name: str               # 必须 — 子 Agent 唯一名称
         description: str        # 必须 — 供主 Agent 决策的描述
         system_prompt: str      # 必须 — 子 Agent 系统提示词
         tools: list[str]        # 必须 — 工具名称列表（运行时解析）
-        model: str              # 可选 — 模型标识符
+        model: str              # 可选 — 模型标识符，不配置则继承主 Agent
         skills: list[str]       # 可选 — 技能路径列表
-
-    Args:
-        configs_dir: 配置文件目录，默认为 CONFIGS_DIR。
 
     Returns:
         SubAgent 配置字典列表，tools 字段暂为字符串名称。
@@ -55,37 +56,39 @@ def load_subagent_configs(configs_dir: Optional[Path] = None, ) -> list[dict]:
     if configs_dir is None:
         configs_dir = CONFIGS_DIR
 
-    configs: list[dict] = []
+    configs: List[Dict] = []
 
+    # 目录不存在属于部署问题，返回空列表交由调用方决定是否告警
     if not configs_dir.exists():
-        print(f"[WARNING] 子 Agent 配置目录不存在: {configs_dir}")
+        logger.warning("子 Agent 配置目录不存在: %s", configs_dir)
         return configs
 
     for yaml_file in sorted(configs_dir.glob("*.yaml")):
+        # YAML 语法错误 / IO 错误分开捕获，日志更精确
         try:
             with open(yaml_file, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except yaml.YAMLError as e:
-            print(f"[ERROR] 解析 YAML 文件失败: {yaml_file} — {e}")
+            logger.error("解析 YAML 文件失败: %s — %s", yaml_file, e)
             continue
         except Exception as e:
-            print(f"[ERROR] 读取文件失败: {yaml_file} — {e}")
+            logger.error("读取文件失败: %s — %s", yaml_file, e)
             continue
 
-        # 校验必填字段
+        # 必填字段缺失则跳过该文件，不进入后续解析
         missing = _validate_subagent_config(data, yaml_file.name)
         if missing:
-            print(f"[ERROR] {yaml_file.name} 缺少必填字段: {', '.join(missing)}")
+            logger.error("%s 缺少必填字段: %s", yaml_file.name, ", ".join(missing))
             continue
 
         configs.append(data)
-        print(f"[INFO] 已加载子 Agent 配置: {data['name']} ← {yaml_file.name}")
+        logger.info("已加载子 Agent 配置: %s ← %s", data["name"], yaml_file.name)
 
     return configs
 
 
 # =============================================================================
-# ★ 3. 公开 API：resolve_subagent_tools
+# ★ 2. 公开 API：resolve_subagent_tools
 # =============================================================================
 def resolve_subagent_tools(
         configs: List[Dict],
@@ -93,136 +96,188 @@ def resolve_subagent_tools(
         extra_middleware: Dict[str, List] | None = None,
 ) -> List[Dict]:
     """
-    将 YAML 配置中的工具名称字符串解析为实际的工具可调用对象。
+    将 YAML 配置中的工具名称字符串解析为实际的工具对象，组装为 SubAgent 列表。
 
-    匹配规则：
-    - YAML中 tools 的每个字段串作为前缀/子串，与 available_tools 的 .name  属性匹配
-    - 例如： "supplier_query" 匹配名为 "supplier_query"的工具
-    - 例如： "supplier_" 匹配所有以 "supplier_" 开头的工具
+    分三步（对应下方三个内部函数）：
+        1. _build_tool_index : 工具列表 → 名称索引字典（只建一次，全程复用）
+        2. _match_tools     : 按模式解析工具，去重保序
+        3. _build_subagent  : 原始配置 + 已解析工具 → SubAgent 字典
 
-    解析过程：
-    1. 构建工具名  → 工具对象的索引字典
-    2. 对每个子 Agent 配置，遍历工具名称模式，执行子串匹配
-    3. 去重后组装为 create_deep_agent() 可直接接收的 SubAgent 字典
-
+    匹配规则（逐级降级）：
+    1. 精确匹配：模式与工具名完全相同（O(1) 索引查找）
+    2. 前缀匹配：模式作为工具名前缀，如 "supplier_"；降级匹配记 INFO
+    3. 无匹配：记 WARNING（常见于工具名拼写错误）
 
     Args:
         configs: load_subagent_configs() 返回的原始配置列表。
         available_tools: 可用的工具对象列表（来自 MCP 客户端）。
         extra_middleware: 子 Agent 额外中间件，key 为子 Agent 名称，
-                          value 为中间件实例列表。
+                          value 为中间件实例列表。YAML 只能写出字符串/
+                          字典、表达不了实例，所以中间件只能从这里代码注入。
 
     Returns:
-        可以直接传入 create_deep_agent(subagents=...) 的 SubAgent 字典列表。
+        可直接传入 create_deep_agent(subagents=...) 的 SubAgent 字典列表。
     """
     if extra_middleware is None:
         extra_middleware = {}
 
-    # 构建工具名 → 工具对象的索引字典，用于 O(1) 快速查找
-    # key: 工具名称, value: 工具对象
-    tool_index: Dict[str, object] = {}
-    for t in available_tools:
-        name = getattr(t, "name", None)
-        if name:
-            tool_index[name] = t
+    # 工具索引只建一次，所有子 Agent 共享
+    tool_index = _build_tool_index(available_tools)
 
     subagents: List[Dict] = []
     for config in configs:
-        tools_name = config.get("tools", [])
-        resolved_tools = []
-
-        # ── 工具匹配阶段：按模式匹配可用工具 ──
-        for pattern in tools_name:
-            matched = False
-            # 子串匹配："supplier_query" 匹配同名工具，"supplier_" 匹配所有以此为前缀的工具
-            for tool_name, tool_obj in tool_index.items():
-                if pattern in tool_name:  # 子串匹配（而非前缀匹配），更灵活
-                    resolved_tools.append(tool_obj)
-                    matched = True
-            if not matched:
-                print(
-                    f"[WARNING] 子 Agent '{config['name']}': "
-                    f"工具模式 '{pattern}' 未能匹配任何可用工具"
-                )
-
-        # ── 去重阶段（保留顺序）：同名工具只保留第一个 ──
-        seen = set()
-        unique_tools = []
-        for t in resolved_tools:
-            name = getattr(t, "name", id(t))
-            if name not in seen:
-                seen.add(name)
-                unique_tools.append(t)
-
-        # ── 组装 SubAgent 字典 ──
-        subagent: Dict = {
-            "name": config["name"],
-            # 去除 description 中的换行符，避免多行系统提示中出现额外空行
-            "description": config["description"].replace("\n", " ").strip(),
-            "system_prompt": config["system_prompt"],
-            "tools": unique_tools,
-        }
-
-        # 可选字段：模型标识符
-        if config.get("model"):
-            subagent["model"] = config["model"]
-
-        # 可选字段：技能路径列表
-        if config.get("skills"):
-            subagent["skills"] = config["skills"]
-
-        # 可选字段：中断条件（满足条件时暂停主 Agent，等待子 Agent 返回）
-        if config.get("interrupt_on"):
-            subagent["interrupt_on"] = config["interrupt_on"]
-
-        # ── 合并中间件：YAML 配置 + extra_middleware ──
-        # YAML 中的 middleware 先加载，extra_middleware 中的追加到后面
-        agent_middleware = list(config.get("middleware", []))
-        if config.get("name") in extra_middleware:
-            agent_middleware.extend(extra_middleware[config["name"]])
-        if agent_middleware:
-            subagent["middleware"] = agent_middleware
-
-        subagents.append(subagent)
-        print(
-            f"[INFO] 子 Agent '{config['name']}' 已解析: "
-            f"{len(unique_tools)} 个工具, "
-            f"{len(config.get('skills', []))} 个技能"
+        tools = _match_tools(config.get("tools", []), tool_index, config["name"])
+        subagents.append(_build_subagent(config, tools, extra_middleware))
+        logger.info(
+            "子 Agent '%s' 已解析: %d 个工具, %d 个技能",
+            config["name"], len(tools), len(config.get("skills", [])),
         )
 
-    # 所有子 Agent 处理完毕，返回列表
     return subagents
 
 
 # =============================================================================
-# ★ 4. 内部函数：_validate_subagent_config
+# ★ 3. 内部函数：_build_tool_index
+# =============================================================================
+def _build_tool_index(available_tools: List) -> Dict[str, Any]:
+    """
+    构建工具名 → 工具对象的索引字典，供精确匹配 O(1) 查找。
+
+    - 无 name 属性的工具直接跳过
+    - 同名工具后者覆盖前者（与 FastMCP 注册行为一致），记 warning
+    """
+    tool_index: Dict[str, Any] = {}
+    for t in available_tools:
+        name = getattr(t, "name", None)
+        if not name:
+            continue
+        if name in tool_index:
+            logger.warning("工具名 '%s' 重复，后注册者覆盖前者", name)
+        tool_index[name] = t
+    return tool_index
+
+
+# =============================================================================
+# ★ 4. 内部函数：_match_tools（精确 → 前缀）
+# =============================================================================
+def _match_tools(patterns: List[str], tool_index: Dict[str, Any], agent_name: str) -> List:
+    """
+    按模式列表解析工具，返回去重后的工具对象列表（保持声明顺序）。
+
+    去重要保序：工具顺序影响 LLM 看到的工具列表顺序（越靠前越容易被
+    选用），按 YAML 声明顺序保留首次出现的工具，与配置意图一致。
+
+    Args:
+        patterns: YAML 配置中的工具名称模式列表。
+        tool_index: 工具名 → 工具对象的索引字典。
+        agent_name: 子 Agent 名称（仅用于日志）。
+    """
+    resolved: List = []
+
+    for pattern in patterns:
+        # 第 1 级：精确匹配（最高频路径，O(1) 查找不遍历）
+        if pattern in tool_index:
+            resolved.append(tool_index[pattern])
+            continue
+
+        # 第 2 级：前缀匹配（降级路径，记 INFO 便于排查配置意图）
+        # 典型场景："supplier_" 一次授权所有 supplier_ 前缀的工具
+        prefix_matched = [
+            obj for name, obj in tool_index.items()
+            if name.startswith(pattern)
+        ]
+        if prefix_matched:
+            logger.info(
+                "子 Agent '%s': 模式 '%s' 前缀匹配到 %s",
+                agent_name, pattern,
+                [getattr(obj, "name", "?") for obj in prefix_matched],
+            )
+            resolved.extend(prefix_matched)
+            continue
+
+        # 第 3 级：无匹配，大概率是 YAML 中工具名拼写错误
+        logger.warning(
+            "子 Agent '%s': 工具模式 '%s' 未能匹配任何可用工具",
+            agent_name, pattern,
+        )
+
+    # 去重（保序）：如 "supplier_"（前缀）与 "supplier_query"（精确）
+    # 同时出现时同一工具会被解析两次，这里只保留第一个
+    seen = set()
+    unique_tools = []
+    for t in resolved:
+        name = getattr(t, "name", None) or id(t)
+        if name not in seen:
+            seen.add(name)
+            unique_tools.append(t)
+
+    return unique_tools
+
+
+# =============================================================================
+# ★ 5. 内部函数：_build_subagent
+# =============================================================================
+def _build_subagent(config: Dict, tools: List, extra_middleware: Dict[str, List]) -> Dict:
+    """
+    将单条原始配置 + 已解析工具组装为 SubAgent 字典。
+
+    可选字段（model / skills / interrupt_on / middleware）未配置时不写入，
+    避免空值覆盖 DeepAgents 框架的默认行为。
+    """
+    subagent: Dict = {
+        "name": config["name"],
+        # 折叠所有空白字符为单个空格：description 会被拼进主 Agent 的
+        # 系统提示，多行文本会产生额外空行/缩进，干扰模型理解
+        "description": " ".join(config["description"].split()),
+        "system_prompt": config["system_prompt"],
+        "tools": tools,
+    }
+
+    # 模型标识符，不配置则继承主 Agent 模型
+    if config.get("model"):
+        subagent["model"] = config["model"]
+
+    # 技能路径列表
+    if config.get("skills"):
+        subagent["skills"] = config["skills"]
+
+    # 中断条件（Human-in-the-Loop）：如 order_create / order_update
+    # 执行前暂停主 Agent，等待人工审批
+    if config.get("interrupt_on"):
+        subagent["interrupt_on"] = config["interrupt_on"]
+
+    # 合并中间件：YAML 中的先加载，extra_middleware 追加到后面
+    # （洋葱模型：后追加的在外层，可对前者做前置/后置处理）
+    agent_middleware = list(config.get("middleware", []))
+    if config["name"] in extra_middleware:
+        agent_middleware.extend(extra_middleware[config["name"]])
+    if agent_middleware:
+        subagent["middleware"] = agent_middleware
+
+    return subagent
+
+
+# =============================================================================
+# ★ 6. 内部函数：_validate_subagent_config
 # =============================================================================
 def _validate_subagent_config(data: Dict, filename: str) -> List[str]:
     """
-    校验 SubAgent 配置的必填字段。
+    校验必填字段：name / description / system_prompt / tools。
 
-    检查以下规则:
-    - name、description、system_prompt、tools 四个字段必须存在且不为 None
-    - tools 必须是非空列表
+    - tools 必须是非空列表（空列表意味着子 Agent 无任何能力）
     - system_prompt 必须是非空字符串
 
-    Args:
-        data: 从 YAML 解析出的配置字典。
-        filename: 文件名（仅用于日志，不影响校验结果）。
-
     Returns:
-        缺失或校验失败的字段名列表（空列表表示通过校验）。
+        缺失或非法的字段名列表（空列表表示通过校验）。
     """
     required = ["name", "description", "system_prompt", "tools"]
     missing = [f for f in required if f not in data or data[f] is None]
 
-    # tools 必须是非空列表
     if "tools" in data:
         tools = data["tools"]
         if not isinstance(tools, list) or len(tools) == 0:
             missing.append("tools (必须为非空列表)")
 
-    # system_prompt 不能为空字符串
     if "system_prompt" in data:
         sp = data["system_prompt"]
         if not isinstance(sp, str) or not sp.strip():
