@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 REQUIRED_ENV = (
@@ -50,6 +52,7 @@ def main() -> int:
     """Print an environment report and return a shell-friendly status code."""
     failed = False
     print(f"Python: {sys.version.split()[0]}")
+    print(f"运行平台: {sys.platform}")
 
     for name in REQUIRED_ENV:
         configured = bool(os.getenv(name))

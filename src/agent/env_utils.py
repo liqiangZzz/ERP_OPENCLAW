@@ -26,6 +26,7 @@ DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
 GLM_API_KEY = os.getenv('GLM_API_KEY')
 QWEN_API_KEY = os.getenv('QWEN_API_KEY')
 ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
+KIMI_API_KEY = os.getenv('KIMI_API_KEY')
 
 
 # =============================================================================
@@ -36,6 +37,7 @@ ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
 GLM_BASE_URL = os.getenv('GLM_BASE_URL')
 DEEPSEEK_BASE_URL = os.getenv('DEEPSEEK_BASE_URL')
 QWEN_BASE_URL = os.getenv('QWEN_BASE_URL')
+KIMI_BASE_URL = os.getenv('KIMI_BASE_URL')
 
 
 # =============================================================================
