@@ -7,35 +7,53 @@ authors = [
 ]
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"  # deepagents (direct) and numpy/aiofile/rpds-py (transitive) all require >=3.11
+# Floors reflect the CONDA env you actually run (deepagents 0.7.28 stack).
+# beautifulsoup4 moved to the 'scrape' extra: it is only used by the sandbox
+# web-scraper skill and is not installed in the conda host.
 dependencies = [
-    "deepagents>=0.4.12,<0.5",
+    "deepagents>=0.7.28,<0.8",
     "fastapi>=0.115,<1.1",
     "fastmcp>=3.2.4,<4",
     "httpx>=0.28,<0.29",
-    "langchain>=1.2.13,<2",
+    "langchain>=1.4.6,<2",           # deepagents 0.7.x requires langchain>=1.4.6
     "langchain-mcp-adapters>=0.2.2,<0.3",
     "langchain-openai>=1.1.12,<2",
-    "langgraph>=1.1.3,<2",
-    "langgraph-checkpoint-mongodb>=0.2,<0.4",
+    "langgraph>=1.2.12,<1.3",        # langchain 1.4.x requires langgraph>=1.2.12,<1.3
+    "langgraph-checkpoint-mongodb>=0.4,<0.5",
     "loguru>=0.7,<0.8",
     "opensandbox>=0.1.7,<0.2",
-    "pymongo>=4.10,<5",
+    "pymongo>=4.12,<4.17",           # langgraph-checkpoint-mongodb 0.4.x caps pymongo<4.17
     "python-dotenv>=1.2,<2",
     "pyyaml>=6,<7",
     "requests>=2.32,<3",
-    "beautifulsoup4>=4.12,<5",
-    "uvicorn[standard]>=0.30,<1",
+    "uvicorn[standard]>=0.35,<1",    # fastmcp 3.x requires uvicorn>=0.35
     "zai-sdk>=0.2.2,<0.3",
 ]
 
 
 [project.optional-dependencies]
+# Single source of truth for dev tooling: `pip install -e '.[dev]'` (used by Makefile
+# and README). The duplicate PEP 735 [dependency-groups].dev was removed because nothing
+# referenced it (no uv.lock / `uv sync` in this repo) and it had diverged from this list.
 dev = [
-    "anyio>=4.7",
-    "mypy>=1.11.1",
-    "pytest>=9",
+    "anyio>=4.7.0",
+    "langgraph-cli[inmem]>=0.4.14",
+    "mypy>=1.13.0",
+    "pytest>=9.0.3",
     "ruff>=0.8.2",
+]
+# Web-scraper skill deps — HOST-SIDE ADVISORY ONLY. Nothing installs this extra
+# automatically: the real consumer is the sandbox, which creates /opt/skills-venv and
+# runs an UNPINNED `pip install requests beautifulsoup4` at runtime
+# (src/agent/backends/global_sandbox_manager.py). scrape_page.py self-installs
+# markdownify the same way, and lxml is never installed anywhere, so _has_lxml() is
+# always False and html.parser is what actually runs. All three imports are guarded,
+# so the app starts fine without them.
+scrape = [
+    "beautifulsoup4>=4.12,<5",
+    "lxml>=4.9",
+    "markdownify>=0.12",
 ]
 
 [build-system]
@@ -44,11 +62,15 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+# NOTE: src/skills/** is deliberately NOT packaged (it has no __init__.py either).
+# Skills are read from the source tree at runtime (LOCAL_SKILLS_DIR = SRC_DIR/"skills"
+# in agent/backends/global_sandbox_manager.py) and uploaded into the sandbox, so they
+# only work from a source checkout — not from an installed wheel. That is intended.
 include = ["agent*", "api_view*", "mcp_server*"]
 
-
-[tool.setuptools.package-data]
-"*" = ["py.typed"]
+# [tool.setuptools.package-data] "*" = ["py.typed"] was removed: no py.typed marker file
+# exists in any package, so the entry packaged nothing (dead config). If you want the
+# distribution advertised as typed, add an empty src/<pkg>/py.typed first, then restore it.
 
 [tool.ruff]
 lint.select = [
@@ -73,12 +95,3 @@ lint.ignore = [
 "tests/*" = ["D", "UP"]
 [tool.ruff.lint.pydocstyle]
 convention = "google"
-
-[dependency-groups]
-dev = [
-    "anyio>=4.7.0",
-    "langgraph-cli[inmem]>=0.4.14",
-    "mypy>=1.13.0",
-    "pytest>=9.0.3",
-    "ruff>=0.8.2",
-]
