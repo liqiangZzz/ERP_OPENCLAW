@@ -208,12 +208,12 @@ def create_sse_message(data: dict) -> str:
 # ============================================================
 
 class ResumeRequest(BaseModel):
-    """中断恢复请求体，resume 字段的格式取决于中断类型：
+    """中断恢复请求体，resume 字段的格式 create_sse_message 取决于中断类型：
     - 数据补充中断: {"supplement": "用户自由文本输入"}
     - HITL 审批中断: {"decisions": [{"type": "approve"}]} 或 [{"type": "reject"}]
     """
     resume: dict
-    user_id: str = "laoxiao"
+    user_id: str = "liqiang"
 
 
 # ============================================================
@@ -224,7 +224,7 @@ async def stream_chat_response(
     message: str = None,
     thread_id: str = None,
     resume_data: dict = None,
-    user_id: str = "laoxiao",
+    user_id: str = "liqiang",
 ) -> AsyncIterator[str]:
     """
     流式生成对话响应，支持 Human-in-the-Loop 中断与恢复。
@@ -262,6 +262,7 @@ async def stream_chat_response(
     tool_call_stack = []
 
     # ---- 根据模式构建 input 和 display_messages ----
+    # 恢复模式：加载已有展示消息，用 Command(resume=...) 恢复
     if resume_data is not None:
         # 恢复模式：加载已有展示消息，用 Command(resume=...) 恢复
         existing = await agent_loader.get_display_messages(thread_id) or []
@@ -318,6 +319,7 @@ async def stream_chat_response(
                         # ---- 第 2 层：HITL 审批中断（interrupt_on 配置）----
                         yield create_sse_message({
                             "type": "interrupt",
+                            # 审批中断
                             "interrupt_type": "hitl_approval",
                             "action_requests": interrupt_value["action_requests"],
                             "review_configs": interrupt_value.get("review_configs", []),
@@ -331,8 +333,11 @@ async def stream_chat_response(
                         # ---- 第 1 层：数据补充中断（request_order_info 工具）----
                         yield create_sse_message({
                             "type": "interrupt",
+                            # 数据补充中断
                             "interrupt_type": "order_info_supplement",
+                            # 缺失字段
                             "missing_fields": interrupt_value["missing_fields"],
+                            # 已收集数据
                             "collected_data": interrupt_value["collected_data"],
                             "thread_id": thread_id,
                         })
@@ -357,6 +362,8 @@ async def stream_chat_response(
                 # 清理空的 assistant 消息
                 cleaned = [
                     dm for dm in display_messages
+                    # 过滤掉空的 assistant 消息
+                    # 保留中断消息
                     if not (dm["role"] == "assistant" and not dm.get("content"))
                 ]
 
@@ -408,6 +415,7 @@ async def stream_chat_response(
                         tool_call_stack.append(new_tool)
 
                         yield create_sse_message({
+                            # 工具开始调用
                             "type": "tool_start",
                             "tool_call_id": tool_id,
                             "tool_name": tool_chunk['name'],
@@ -463,6 +471,7 @@ async def stream_chat_response(
                 tool_id = finished_tool["id"] if finished_tool else ""
 
                 yield create_sse_message({
+                    # 工具执行结果
                     "type": "tool_result",
                     "tool_name": tool_name,
                     "tool_call_id": tool_id,
