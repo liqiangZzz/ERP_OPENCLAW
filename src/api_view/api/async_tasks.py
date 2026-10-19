@@ -12,7 +12,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from langgraph_sdk import get_client
 
-
 router = APIRouter()
 
 ASYNC_AGENT_PROTOCOL_URL = os.environ.get(

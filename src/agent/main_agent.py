@@ -54,7 +54,6 @@ from agent.tools.hitl_tools import request_order_info
 from agent.tools.mcp_client import load_mcp_tools
 from agent.tools.web_search import web_search
 
-
 ASYNC_ANALYST_GRAPH_ID = "procurement_analyst_async"
 ASYNC_ANALYST_URL = os.environ.get(
     "ASYNC_AGENT_PROTOCOL_URL",

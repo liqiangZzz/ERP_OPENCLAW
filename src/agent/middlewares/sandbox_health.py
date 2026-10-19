@@ -117,7 +117,6 @@ class SandboxHealthMiddleware(AgentMiddleware):
         1. 重建沙箱（skills + venv）
         2. 再上传种子文件。
         """
-        from agent.backends.sandbox_manager import recreate_user_sandbox
 
         recovered = await recreate_global_sandbox()
         if recovered is not self._backend:

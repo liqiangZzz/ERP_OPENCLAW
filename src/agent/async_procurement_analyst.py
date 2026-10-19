@@ -9,8 +9,8 @@ from typing import Any
 
 import yaml
 from deepagents import create_deep_agent
-from langchain_openai import ChatOpenAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_openai import ChatOpenAI
 
 from agent.backends.global_sandbox_manager import get_global_sandbox_sync
 from agent.env_utils import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
