@@ -94,7 +94,9 @@ async def pre_warm() -> None:
     try:
         from agent.backends.sandbox_setup import setup_sandbox
 
+        #  预热沙箱
         sandbox_backend = await asyncio.to_thread(setup_sandbox, SANDBOX_CONFIG)
+        #  预热沙箱代理
         _warm_reserve = SandboxBackendProxy(sandbox_backend)
         logger.info("沙箱预热就绪：%s", sandbox_backend.id)
     except Exception:

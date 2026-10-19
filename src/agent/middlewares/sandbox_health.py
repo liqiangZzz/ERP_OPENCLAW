@@ -15,6 +15,7 @@ from typing import Any, Optional, Dict
 
 from langchain.agents.middleware import AgentMiddleware
 
+from agent.backends.global_sandbox_manager import recreate_global_sandbox
 from agent.backends.sandbox_proxy import SandboxBackendProxy
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ class SandboxHealthMiddleware(AgentMiddleware):
         """
         super().__init__()
         self._backend = sandbox_backend
-        self.user_id = user_id
+        self._user_id = user_id
         self._agents_md = agents_md_content
 
     # ------------------------------------------------------------------
@@ -76,13 +77,16 @@ class SandboxHealthMiddleware(AgentMiddleware):
         Returns:
             始终返回 None，不修改 Agent 状态。恢复操作在后台完成。
         """
+
         # 先 ping 检查沙箱是否可达
-        ok = await self._check()
-        if ok:
+        if await self._check():
             return None
 
         # 沙箱不可用，触发自动恢复
-        logger.warning("用户 %s 沙箱无响应，触发自动修复...", self.user_id)
+        logger.warning(
+            "Global sandbox is unhealthy; triggering automatic recovery. user_id=%s",
+            self._user_id,
+        )
         await self._recover()
         return None
 
@@ -97,8 +101,8 @@ class SandboxHealthMiddleware(AgentMiddleware):
             bool: 沙箱是否存活，正常返回True，任何异常返回False
         """
         try:
-            await asyncio.to_thread(self._backend.execute, "echo ok")
-            return True
+            result = await asyncio.to_thread(self._backend.execute, "echo ok")
+            return result.exit_code == 0
         except Exception:
             return False
 
@@ -115,9 +119,12 @@ class SandboxHealthMiddleware(AgentMiddleware):
         """
         from agent.backends.sandbox_manager import recreate_user_sandbox
 
-        await recreate_user_sandbox(self.user_id)
+        recovered = await recreate_global_sandbox()
+        if recovered is not self._backend:
+            self._backend.replace_backend(recovered)
+
         await asyncio.to_thread(
             self._backend.upload_files,
             [("/AGENTS.md", self._agents_md)]
         )
-        logger.info("用户 %s 沙箱自动恢复完成", self.user_id)
+        logger.info("Global sandbox automatic recovery completed")

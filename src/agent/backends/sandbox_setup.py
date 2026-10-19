@@ -74,11 +74,11 @@ def setup_sandbox(config, sandbox_id=None, image=None) -> OpenSandboxBackend:
             entrypoint=["/opt/opensandbox/code-interpreter.sh"],
             env={"PYTHON_VERSION": "3.11"},
             resource={"cpu": "2", "memory": "4Gi"},
-            timeout=timedelta(hours=2),
+            timeout=timedelta(minutes=10),
             connection_config=config,
             # network_policy=NetworkPolicy(  # 沙箱网络路由限制策略
-            #     domain_secrets="deny",
-            #     egress=[
+            #     domain_secrets="deny",  # 拒绝所有域名的访问
+            #     egress=[ # 允许访问 pypi.org 和 github.com
             #         NetworkRule(action="allow", target="pypi.org"),
             #         NetworkRule(action="allow", target="*.github.com"),
             #     ]
