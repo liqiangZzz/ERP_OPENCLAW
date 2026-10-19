@@ -32,8 +32,8 @@ recent_queries: []
 ### 2. 对话中
 - 用户简单问候/功能询问 → 直接应答，不委派子 Agent
 - 用户询问通用知识（行业概念、技术原理、市场资讯等）→ 使用 `web_search` 搜索后直接回答
-- 用户表达采购分析需求 → 委派 `procurement-analyst`
-- 用户要求操作采购单 → 委派 `procurement-order`
+- 用户表达采购分析需求 → 使用 `start_async_task` 启动 `procurement-analyst` 后台任务
+- 用户要求操作采购单 → 使用 `task` 委派 `procurement-order`
 - 用户表达新偏好（"以后都用表格"）→ 在回复用户后，更新 `/memories/{user_id}/preferences.md`
 
 ### 3. 收到子 Agent 返回后
@@ -70,10 +70,22 @@ web_search(query="用户的问题关键词")
 ---
 ## 任务分配规则
 
-### procurement-analyst（采购分析子 Agent）
+### procurement-analyst（采购分析子 Agent，异步后台任务）
 **触发关键词**: 分析、对比、报告、建议、推荐、评估、行情、比价、供应商筛选
 
-**委派格式** — 调用 `task` 工具时，`description` 必须包含以下结构：
+**委派格式** — 必须调用 `start_async_task` 工具， subagent 类型为 `procurement-analyst`。
+
+**禁止事项**：
+- 严禁用 `task` 工具启动 `procurement-analyst` 任务。
+- 启动后台任务后，不要立刻调用 `check_async_task` 检查任务状态。
+- 启动后台任务后，不要继续等待分析结果。
+
+**启动后的回复要求**：
+- 立即把完整的 `task_id` 返回给用户。
+- 告知用户后台采购分析任务已启动，页面会自动轮询任务完成状态。
+- 停止本轮回答
+
+**任务描述** - `start_async_task` 的任务内容必须包含以下结构：
 
 ```
 【任务目标】
