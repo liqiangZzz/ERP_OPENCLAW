@@ -2,7 +2,7 @@
   "$schema": "https://langgra.ph/schema.json",
   "dependencies": ["."],
   "graphs": {
-    "agent": "./src/agent/main_agent.py:agent"
+    "procurement_analyst_async": "./src/agent/async_procurement_analyst.py:agent"
   },
   "env": ".env"
 }

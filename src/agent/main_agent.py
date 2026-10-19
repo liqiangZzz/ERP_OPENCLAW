@@ -27,7 +27,7 @@ import os
 import sys
 from dataclasses import field
 
-from deepagents import create_deep_agent
+from deepagents import AsyncSubAgent, create_deep_agent
 from deepagents.backends import CompositeBackend, StoreBackend
 from deepagents.backends.protocol import SandboxBackendProtocol
 from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
@@ -53,6 +53,27 @@ from agent.tools.download_sandbox_file import create_download_tool
 from agent.tools.hitl_tools import request_order_info
 from agent.tools.mcp_client import load_mcp_tools
 from agent.tools.web_search import web_search
+
+
+ASYNC_ANALYST_GRAPH_ID = "procurement_analyst_async"
+ASYNC_ANALYST_URL = os.environ.get(
+    "ASYNC_AGENT_PROTOCOL_URL",
+    "http://127.0.0.1:2024",
+)
+
+ASYNC_ANALYST_INSTRUCTIONS = """
+## 异步采购分析任务
+
+当用户提出耗时的采购分析、供应商比价、行情调研、成本评估、报告生成或需要多步数据收集的任务时，
+必须使用 `start_async_task` 启动 `procurement-analyst` 后台任务。
+
+严禁使用同步 `task` 工具启动 `procurement-analyst`。`task` 工具只用于 `procurement-order` 等同步订单任务。
+
+启动任务后必须立即把完整 task_id 返回给用户，并停止本轮回答。不要立刻调用 `check_async_task`。
+只有用户明确询问进度、结果、取消或补充要求时，才调用 `check_async_task`、`list_async_tasks`、
+`cancel_async_task` 或 `update_async_task`。
+"""
+
 
 
 def _setup_logging() -> None:
@@ -202,7 +223,7 @@ async def create_main_agent(
     # /persisted-skills/ → StoreBackend（按技能命名空间组织）。
     def backend_factory(runtime):
         return CompositeBackend(
-            default=sandbox_backend,
+            default=sandbox_backend,# 默认沙箱后端 （临时文件、代码执行 等操作）
             routes={
                 "/memories/": StoreBackend(
                     runtime=runtime,
@@ -264,11 +285,31 @@ async def create_main_agent(
     # ---- Phase 7: 子 Agent 工具解析 ----
     logger.info("Phase 7: 解析子 Agent 工具名称...")
     # 根据 YAML 配置将可用工具映射到子 Agent，生成子 Agent 定义列表
-    subagents = resolve_subagent_tools(
-        precomputed.raw_subagent_configs,
+
+    #  同步子 Agent 配置（不包含采购分析）
+    sync_subagent_configs = [
+        c for c in precomputed.raw_subagent_configs
+        if c.get("name") != "procurement-analyst"
+    ]
+    sync_subagents = resolve_subagent_tools(
+        sync_subagent_configs,
         available_tools,
         extra_middleware=extra_middleware,
     )
+
+    async_subagents: list[AsyncSubAgent] = [
+        {
+            "name": "procurement-analyst",
+             "description": (
+                "耗时采购分析专家。负责供应商比价、物料行情分析、采购策略建议、"
+                "市场调研、成本评估和报告生成。后台运行，适合长任务。"
+            ),
+            "graph_id": ASYNC_ANALYST_GRAPH_ID,
+            "url": ASYNC_ANALYST_URL,
+        }
+    ]
+
+    subagents = sync_subagents + async_subagents
     logger.info(f"  已解析 {len(subagents)} 个子 Agent")
 
     # ---- Phase 8: 主 Agent 中间件栈 ----
@@ -305,7 +346,7 @@ async def create_main_agent(
     logger.info("Phase 9: 创建 Deep Agent...")
     agent_graph = create_deep_agent(
         model=MAIN_MODEL,
-        system_prompt=system_prompt,
+        system_prompt=system_prompt+ "\n\n" + ASYNC_ANALYST_INSTRUCTIONS,
         skills=["/skills/main/"],
         memory=[AGENTS_MD_FILENAME],
         tools=[web_search, assign_skill, download_sandbox_file],
