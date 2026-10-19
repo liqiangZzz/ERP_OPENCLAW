@@ -4,7 +4,7 @@
 
 ## 运行环境
 
-- Python 3.10+（推荐 3.11）
+- Python 3.11+（`deepagents` 等依赖要求 `>=3.11`，3.10 装不上）
 - Node.js 18+
 - MongoDB 6+（由你本地自行启动）
 - Java ERP API，默认 `http://localhost:8080/api`
@@ -12,13 +12,22 @@
 
 ## 初始化
 
+本项目用 conda 环境管理（环境名 `ERP_OPENCLAW`）。
+
 ```bash
-python3.11 -m venv .venv
-.venv/bin/python -m ensurepip --upgrade
-.venv/bin/python -m pip install -e '.[dev]'
+conda activate ERP_OPENCLAW          # 或 conda create -n ERP_OPENCLAW python=3.11
+python -m pip install -r requirements.txt    # 第 1 步：第三方依赖，全量精确锁定
+python -m pip install -e '.[dev]' --no-deps  # 第 2 步：本项目本体 + 开发工具
 cp .env.example .env
 cd frontend && npm ci
 ```
+
+第 2 步的 `--no-deps` 是必要的：它阻止 pip 按 `pyproject.toml` 的区间重新解析依赖，
+从而覆盖第 1 步刚锁好的精确版本。`requirements.txt` 里不含 `-e .`，因为该行会按
+「当前工作目录」解析 `.`，只有在项目根目录执行才成立；拆成两步可以避免这个坑。
+
+`requirements.txt` 是全量精确锁定（`==`，含传递依赖），用于复现；
+`pyproject.toml` 保留区间式声明（`>=x,<y`），表达升级意图。两者用途不同，改版本时按需选一个。
 
 在 `.env` 中填写模型和 OpenSandbox 凭据。不要提交 `.env`。
 本地开发默认 `PREWARM_SANDBOX=false`，启动 Python 服务时不会主动创建沙箱；
@@ -29,7 +38,7 @@ cd frontend && npm ci
 环境检查：
 
 ```bash
-.venv/bin/python scripts/check_environment.py
+python scripts/check_environment.py
 ```
 
 ## 启动

@@ -3,8 +3,13 @@
 # Default target executed when no arguments are given to make.
 all: help
 
-PYTHON ?= .venv/bin/python
+# Use the ACTIVE interpreter (this project is managed with conda: `conda activate ERP_OPENCLAW`).
+# Override per-invocation if needed:  make backend PYTHON=/path/to/python
+PYTHON ?= python
 
+# Intent-based install: resolves pyproject.toml ranges (and pulls mypy/ruff via .[dev]).
+# For a byte-exact reproducible env instead, use the lock:
+#   pip install -r requirements.txt && pip install -e . --no-deps
 install:
 	$(PYTHON) -m pip install -e '.[dev]'
 	cd frontend && npm ci
@@ -27,16 +32,16 @@ test:
 	PYTHONPATH=src $(PYTHON) -m pytest $(TEST_FILE)
 
 integration_tests:
-	python -m pytest tests/integration_tests 
+	$(PYTHON) -m pytest tests/integration_tests
 
 test_watch:
-	python -m ptw --snapshot-update --now . -- -vv tests/unit_tests
+	$(PYTHON) -m ptw --snapshot-update --now . -- -vv tests/unit_tests
 
 test_profile:
-	python -m pytest -vv tests/unit_tests/ --profile-svg
+	$(PYTHON) -m pytest -vv tests/unit_tests/ --profile-svg
 
 extended_tests:
-	python -m pytest --only-extended $(TEST_FILE)
+	$(PYTHON) -m pytest --only-extended $(TEST_FILE)
 
 
 ######################
@@ -53,15 +58,15 @@ lint_tests: PYTHON_FILES=tests
 lint_tests: MYPY_CACHE=.mypy_cache_test
 
 lint lint_diff lint_package lint_tests:
-	python -m ruff check .
-	[ "$(PYTHON_FILES)" = "" ] || python -m ruff format $(PYTHON_FILES) --diff
-	[ "$(PYTHON_FILES)" = "" ] || python -m ruff check --select I $(PYTHON_FILES)
-	[ "$(PYTHON_FILES)" = "" ] || python -m mypy --strict $(PYTHON_FILES)
-	[ "$(PYTHON_FILES)" = "" ] || mkdir -p $(MYPY_CACHE) && python -m mypy --strict $(PYTHON_FILES) --cache-dir $(MYPY_CACHE)
+	$(PYTHON) -m ruff check .
+	[ "$(PYTHON_FILES)" = "" ] || $(PYTHON) -m ruff format $(PYTHON_FILES) --diff
+	[ "$(PYTHON_FILES)" = "" ] || $(PYTHON) -m ruff check --select I $(PYTHON_FILES)
+	[ "$(PYTHON_FILES)" = "" ] || $(PYTHON) -m mypy --strict $(PYTHON_FILES)
+	[ "$(PYTHON_FILES)" = "" ] || mkdir -p $(MYPY_CACHE) && $(PYTHON) -m mypy --strict $(PYTHON_FILES) --cache-dir $(MYPY_CACHE)
 
 format format_diff:
-	ruff format $(PYTHON_FILES)
-	ruff check --select I --fix $(PYTHON_FILES)
+	$(PYTHON) -m ruff format $(PYTHON_FILES)
+	$(PYTHON) -m ruff check --select I --fix $(PYTHON_FILES)
 
 spell_check:
 	codespell --toml pyproject.toml

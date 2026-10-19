@@ -1,3 +1,11 @@
+ pip install fastmcp httpx langchain-daytona deepagents dotenv langchain-openai zai-sdk langchain-mcp-adapters
+ pillow pyyaml opensandbox-code-interpreter fastapi uvicorn langgraph-checkpoint-mongodb
+
+
+pip install fastapi uvicorn langgraph-checkpoint-mongodb
+ pip install -U "langgraph-cli[inmem]"
+
+
 https://my.feishu.cn/docx/WQVndx4S0odEFUxNXGKcmZSYn0c  基于Harness Engineering架构的企业实战项目
 
 
