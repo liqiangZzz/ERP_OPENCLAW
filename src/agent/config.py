@@ -26,7 +26,7 @@ from agent.env_utils import (
 # =============================================================================
 # 主 Agent 模型
 MAIN_MODEL = init_chat_model(
-    "glm-5.1",
+    "glm-5.3-flash",
     model_provider="openai",
     temperature=1.0,
     base_url=GLM_BASE_URL,
@@ -41,7 +41,7 @@ MAIN_MODEL = init_chat_model(
 
 # ★ 摘要专用模型（摘要需要稳定输出，temperature 设为较低值）
 SUMMARY_MODEL = ChatOpenAI(
-    model="DeepSeek-V4-Flash",
+    model="deepseek-v4.1-flash",
     temperature=0.3,
     api_key=DEEPSEEK_API_KEY,
     base_url=DEEPSEEK_BASE_URL,
@@ -51,10 +51,10 @@ SUMMARY_MODEL = ChatOpenAI(
 
 # ★ 备用模型（当主模型故障时使用）
 FALLBACK_MODEL = init_chat_model(
-    "Kimi-K2.6",                # 改为 Kimi-K2.6
+    "glm-5.3-flash",
     model_provider="openai",    # 如果平台兼容OpenAI接口则保留，否则需调整
     temperature=1.0,
-    base_url=KIMI_BASE_URL,
+    base_url=GLM_BASE_URL,
     api_key=KIMI_API_KEY,
     profile={
         "max_input_tokens": 128000,
