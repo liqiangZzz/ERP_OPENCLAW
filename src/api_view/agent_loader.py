@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from deepagents.middleware.async_subagents import AsyncSubAgentState
+from langgraph.graph import END, START, StateGraph
 from pymongo import MongoClient
 
 from agent.backends import sandbox_manager
@@ -14,6 +16,37 @@ from agent.main_agent import (
     precompute_agent_context,
 )
 from api_view.web_config import MONGODB_URI
+
+
+# =============================================================================
+# ★ 0. 只读状态图 —— 必须走 LangGraph 状态 API 才能拿到完整会话
+# =============================================================================
+"""
+为什么不能直接读 checkpoint["channel_values"]：
+
+    langgraph-checkpoint 4.x 起改用 delta channel 存储 —— 每个 checkpoint 文档
+    只保存「本步更新过的通道」。实测一个 61 条消息的真实会话，其最新 checkpoint 的
+    channel_values 里只有 async_tasks / branch:to:* 这类键，messages 通道根本不在，
+    完整状态需要回放 checkpoint_writes。而 langgraph-checkpoint-mongodb 0.4.0
+    完全没有 delta 处理（不实现 BaseCheckpointSaver.get_delta_channel_history），
+    所以 CheckpointTuple.checkpoint 拿到的是稀疏值。
+
+    后果：/api/history 靠 get_current_messages() 判断会话是否有消息，永远得到 []，
+    于是所有会话都被 if messages: 过滤掉 —— 表现就是「会话没保存、刷新就没了」，
+    但数据其实一条没丢（61 条都在 checkpoint_writes 里）。
+
+    正确读法是走 Pregel 的状态 API，它会自己回放 delta。这里复用一个只读最小图：
+    状态 schema 直接用 deepagents 的 AsyncSubAgentState（含 messages 与 async_tasks
+    及其 reducer），与同一个 CHECKPOINTER 编译后按 thread_id 读快照。实测同一条
+    会话：raw channel_values -> messages 缺失；本 reader -> 61 条消息 + 1 个异步任务。
+"""
+_state_reader = (
+    StateGraph(AsyncSubAgentState)
+    .add_node("_read_state", lambda state: {})
+    .add_edge(START, "_read_state")
+    .add_edge("_read_state", END)
+    .compile(checkpointer=CHECKPOINTER)
+)
 
 
 # =============================================================================
@@ -219,7 +252,9 @@ class AgentLoader:
         """
         获取指定会话的历史状态快照列表。
 
-        直接通过 checkpointer 查询，不依赖 agent graph。
+        走 _state_reader 的状态 API（会回放 delta channel），不再直接
+        CHECKPOINTER.alist() 读原始 channel_values —— 后者每一步只含「本步更新的
+        通道」，拿到的历史条目基本是残缺的（原因见模块顶部说明）。
 
         Args:
             thread_id: 会话线程 ID
@@ -228,24 +263,44 @@ class AgentLoader:
         Returns:
             _StateSnapshot 对象列表，按时间倒序
         """
-        config = self.create_config(thread_id=thread_id)
+        config = {"configurable": {"thread_id": thread_id}}
         states = []
-        async  for ct in CHECKPOINTER.alist(config, limit=limit):
-            snapshot = _StateSnapshot(
-                values=ct.checkpoint.get("channel_values", {}),
-                config=ct.config,
-                created_at=ct.metadata.get("timestamp") if ct.metadata else None,
-                parent_config=ct.parent_config,
-            )
-            states.append(snapshot)
+        try:
+            async for snap in _state_reader.aget_state_history(config, limit=limit):
+                states.append(_StateSnapshot(
+                    values=dict(snap.values or {}),
+                    config=snap.config,
+                    created_at=snap.created_at,
+                    parent_config=snap.parent_config,
+                ))
+        except Exception as e:
+            print(f"[AgentLoader] 获取会话 {thread_id} 历史失败: {e}")
         return states
+
+    # 读取 thread 的完整状态快照（回放 delta channel 后）
+    async def read_thread_state(self, thread_id: str):
+        """
+        通过只读状态图获取该会话回放后的完整状态。
+
+        Args:
+            thread_id: 会话线程 ID
+
+        Returns:
+            langgraph StateSnapshot；无 checkpoint 或读取失败时返回 None
+        """
+        try:
+            return await _state_reader.aget_state({"configurable": {"thread_id": thread_id}})
+        except Exception as e:
+            print(f"[AgentLoader] 读取会话 {thread_id} 状态失败: {e}")
+            return None
 
     # 获取当前消息列表（从 checkpoint）
     async def get_current_messages(self, thread_id: str) -> List[Dict[str, Any]]:
         """
         获取指定会话当前的消息列表。
 
-        直接通过 checkpointer 查询，不依赖 agent graph。
+        走 _state_reader 的状态 API 而不是直接读 checkpoint["channel_values"]，
+        原因见模块顶部说明（langgraph-checkpoint 4.x 的 delta channel 存储）。
 
         Args:
             thread_id: 会话线程 ID
@@ -253,14 +308,44 @@ class AgentLoader:
         Returns:
             消息字典列表，若会话不存在或出错则返回空列表
         """
-        config = self.create_config(thread_id=thread_id)
-        try:
-            ct = await CHECKPOINTER.aget_tuple(config)
-            if ct and ct.checkpoint:
-                return ct.checkpoint.get("channel_values", {}).get("messages", [])
-        except Exception as e:
-            print(f"[AgentLoader] 获取消息失败: {e}")
+        snapshot = await self.read_thread_state(thread_id)
+        if snapshot and snapshot.values:
+            return list(snapshot.values.get("messages", []) or [])
         return []
+
+    # =====================================================================
+    # ★ 2.5.1 异步子 Agent 任务列表
+    # =====================================================================
+
+    async def get_async_tasks(self, thread_id: str) -> Dict[str, Any]:
+        """
+        读取该会话 checkpoint 中 AsyncSubAgentMiddleware 维护的 async_tasks。
+
+        为什么需要它：子 Agent 挂在另一个 Agent Protocol server 上（spec 带 url），
+        deepagents 会主动丢弃父 Agent 的 assistant_id，「任务完成自动唤醒父 Agent」
+        这条路在本地 FastAPI 部署下不成立，只能靠前端轮询。本方法就是刷新页面后
+        恢复后台任务列表的数据来源。
+
+        Args:
+            thread_id: 会话线程 ID
+
+        Returns:
+            {task_id: 任务字段字典}；无任务或读取失败时返回空字典
+        """
+        snapshot = await self.read_thread_state(thread_id)
+        tasks = (snapshot.values or {}).get("async_tasks") if snapshot else None
+        if not isinstance(tasks, dict):
+            return {}
+        # 只保留可 JSON 序列化的标量字段，避免 checkpoint 里混入对象导致
+        # FastAPI response_model 校验失败
+        return {
+            task_id: {
+                key: value
+                for key, value in (task or {}).items()
+                if value is None or isinstance(value, (str, int, float, bool))
+            }
+            for task_id, task in tasks.items()
+        }
 
     # =====================================================================
     # ★ 2.6 会话查询与删除

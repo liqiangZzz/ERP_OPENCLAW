@@ -73,6 +73,11 @@ class ChatResponse(BaseModel):
     """对话相应模型"""
     thread_id: str = Field(..., description="会话 Id")
     messages: List[Message] = Field(default_factory=list, description="消息列表")
+    # 异步子 Agent 后台任务：{task_id: {status, agent_name, created_at, ...}}
+    # 供前端刷新页面后恢复任务卡片并继续轮询状态
+    async_tasks: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict, description="异步子 Agent 任务列表"
+    )
 
 
 # =============================================================================
