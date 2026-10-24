@@ -46,11 +46,6 @@ def _load_analyst_config() -> dict[str, Any]:
     return data
 
 
-def _backend_factory(runtime):
-    """创建采购分析沙箱。"""
-    return get_global_sandbox_sync()
-
-
 async def _load_async_analyst_tools():
     """
     加载采购分析工具。
@@ -102,13 +97,17 @@ def _load_analyst_tools_sync():
 _config = _load_analyst_config()
 _tools = _load_analyst_tools_sync()
 
+# 提前实例化 Sandbox 后端（其实就是获取已经预热好的代理）
+# deepagents 0.7 已移除 ba·ckend 工厂，必须直接传 BackendProtocol 实例
+_sandbox_backend = get_global_sandbox_sync()
+
 agent = create_deep_agent(  # 创建了一个Agent
     model=MAIN_MODEL,
     system_prompt=_config["system_prompt"],
     tools=_tools,
     skills=_config.get("skills", ["/skills/procurement/"]),
     memory=[AGENTS_MD_FILENAME],
-    backend=_backend_factory,
+    backend=_sandbox_backend,
     checkpointer=None,
     name="procurement_analyst_async",
 )

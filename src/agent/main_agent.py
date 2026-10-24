@@ -215,26 +215,29 @@ async def create_main_agent(
     user_id = config["configurable"]["user_id"]
     logger.info("=== 为用户 %s 创建 Agent Graph ===", user_id)
 
-    # ---- Phase 1: CompositeBackend factory ----
-    # 每次请求重建 CompositeBackend（StoreBackend 依赖 runtime），
-    # 外部 sandbox_backend 是 SandboxBackendProxy（热替换不丢引用）。
+    # ---- Phase 1: CompositeBackend 实例 ----
+    # deepagents 0.7 起移除了 backend 工厂（FilesystemMiddleware 会显式 raise TypeError），
+    # 必须直接传初始化好的 BackendProtocol 实例。StoreBackend 在运行期自己从 LangGraph
+    # 执行上下文解析 runtime（backends/store.py:_get_namespace），所以 namespace 只需
+    # 一个返回 tuple[str, ...] 的可调用对象，不再接收 runtime 形参。
     # routes 定义路径前缀到后端的映射：/memories/ → StoreBackend（用户级隔离），
     # /persisted-skills/ → StoreBackend（按技能命名空间组织）。
-    def backend_factory(runtime):
-        return CompositeBackend(
-            default=sandbox_backend,# 默认沙箱后端 （临时文件、代码执行 等操作）
-            routes={
-                "/memories/": StoreBackend(
-                    runtime=runtime,
-                    # 按 user_id 命名空间隔离，无用户 ID 时使用 'anonymous' 避免数据混乱
-                    namespace=lambda rt: (getattr(rt.runtime.context, 'user_id', 'anonymous'))
-                ),
-                "/persisted-skills/": StoreBackend(
-                    runtime=runtime,
-                    namespace=lambda rt: SKILLS_STORE_NAMESPACE
-                )
-            },
-        )
+    # 外部 sandbox_backend 是 SandboxBackendProxy（热替换不丢引用）。
+    backend = CompositeBackend(
+        default=sandbox_backend,  # 默认沙箱后端（临时文件、代码执行等操作）
+        routes={
+            "/memories/": StoreBackend(
+                # 按 user_id 命名空间隔离，与 MemoryUpdateMiddleware 的 (user_id,) 保持一致；
+                # user_id 来自 config["configurable"]，per-request 闭包捕获
+                namespace=lambda _rt: (user_id,),
+                store=STORE,
+            ),
+            "/persisted-skills/": StoreBackend(
+                namespace=lambda _rt: SKILLS_STORE_NAMESPACE,
+                store=STORE,
+            ),
+        },
+    )
 
     # ---- Phase 1.4: 上传 AGENTS.md 到沙箱 ----
     logger.info("Phase 1.4: 上传 AGENTS.md 到沙箱...")
@@ -272,11 +275,11 @@ async def create_main_agent(
             + [download_sandbox_file]
     )
     logger.info(f"  工具池: {len(available_tools)} 个工具")
-    # ---- Phase 6: 子 Agent 中间件（analyst 依赖 backend_factory）----
+    # ---- Phase 6: 子 Agent 中间件（analyst 依赖 backend）----
     logger.info("Phase 6: 创建子 Agent 中间件...")
     extra_middleware = {
         #  分析师中间件
-        "procurement-analyst": create_analyst_middleware(SUMMARY_MODEL, backend_factory),
+        "procurement-analyst": create_analyst_middleware(SUMMARY_MODEL, backend),
         #  订单中间件
         "procurement-order": create_order_middleware(),
     }
@@ -330,7 +333,7 @@ async def create_main_agent(
         # 5. 持久化技能恢复（StoreBackend → 沙箱）
         UserSkillsRestoreMiddleware(sandbox_backend, SKILLS_STORE_NAMESPACE),
         # 6. 对话摘要
-        build_summarization_middleware(backend_factory, SUMMARY_MODEL),
+        build_summarization_middleware(backend, SUMMARY_MODEL),
         # 7. 用户记忆更新
         MemoryUpdateMiddleware(model=SUMMARY_MODEL),
         # 8. 沙箱熔断：连续沙箱错误 ≥ 阈值 → jump_to=end
@@ -351,7 +354,7 @@ async def create_main_agent(
         tools=[web_search, assign_skill, download_sandbox_file],
         subagents=subagents,
         middleware=main_middleware,
-        backend=backend_factory,
+        backend=backend,
         store=STORE,
         checkpointer=CHECKPOINTER,
         context_schema=ProcurementContext,
