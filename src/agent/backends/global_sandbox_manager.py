@@ -19,6 +19,7 @@ from opensandbox.config import ConnectionConfigSync
 
 from agent.backends.custom_opensandbox import OpenSandboxBackend
 from agent.backends.sandbox_proxy import SandboxBackendProxy
+from agent.env_utils import OPENSANDBOX_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +41,11 @@ SANDBOX_IMAGE = (
 
 # 沙箱连接配置
 SANDBOX_CONFIG = ConnectionConfigSync(
-    domain="http://39.100.100.28:8080",
+    domain="http://192.168.0.188:8080",
     use_server_proxy=True,
     request_timeout=timedelta(seconds=60),
     transport=httpx.HTTPTransport(limits=httpx.Limits(max_connections=20)),
+    api_key=OPENSANDBOX_API_KEY,
 )
 
 _lock = threading.RLock()
@@ -105,7 +107,7 @@ def _create_sandbox() -> OpenSandboxBackend:
     """
     创建一个新的OpenSandbox实例。
     """
-    sandbox = SandboxSync().create(
+    sandbox = SandboxSync.create(
         SANDBOX_IMAGE,
         entrypoint=["/opt/opensandbox/code-interpreter.sh"],
         env={"PYTHON_VERSION": "3.11"},
