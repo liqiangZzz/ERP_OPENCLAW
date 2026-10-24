@@ -26,14 +26,22 @@
         @resume="handleResume"
       />
 
-      <!-- 输入区域：中断激活时隐藏，正常/流式时显示 -->
+      <!-- ★ 异步子 Agent 后台任务面板（派出去的任务在这里跟踪，跑完自动回到消息流） -->
+      <AsyncTaskPanel
+        :tasks="visibleTasks"
+        @toggle="handleToggleTask"
+        @dismiss="handleDismissTask"
+      />
+
+      <!-- 输入区域：中断激活时隐藏；回复生成期间保持可输入 -->
       <InputArea
         v-if="!interruptData"
         @send="handleSend"
         @stop="handleStop"
         @toggle-tool-calls="showToolCalls = $event"
-        :disabled="false"
         :streaming="isStreaming"
+        :active-runs="activeRuns"
+        :queued-runs="queuedRuns"
         :show-tool-calls="showToolCalls"
       />
     </main>
@@ -41,13 +49,15 @@
 </template>
 
 <script setup>
-import {onMounted, ref} from 'vue'
+import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue'
 import Sidebar from './components/Sidebar.vue'
 import ChatArea from './components/ChatArea.vue'
 import InputArea from './components/InputArea.vue'
 import InterruptBanner from './components/InterruptBanner.vue'
-import {resumeChat, streamChat} from './api/chat.js'
+import AsyncTaskPanel from './components/AsyncTaskPanel.vue'
+import {getChatState, resumeChat, streamChat} from './api/chat.js'
 import {deleteSession, getMessages, getSessions} from './api/history.js'
+import {extractAsyncTaskId, getAsyncTask} from './api/asyncTasks.js'
 
 /**
  * DeepAgent 聊天应用主组件
@@ -56,6 +66,17 @@ import {deleteSession, getMessages, getSessions} from './api/history.js'
  *   [user] → [assistant 文本] → [tool 调用] → [assistant 文本] → ...
  * 支持 Human-in-the-Loop 中断：
  *   ... → [interrupt] → [用户决策/补充] → [继续]
+ *
+ * 并发模型（本轮改造的重点）：
+ *   输入框在回复生成期间保持可用，允许连续提问。同一个 thread 的 run 由后端
+ *   _stream_with_thread_lock 串行化（避免两个并发 run 争抢同一份 MongoDB
+ *   checkpoint 导致历史分叉），因此前端必须做到「每条消息归属某个 run」，
+ *   而不是往数组尾部无脑追加 —— 否则上一条回复的后续片段会插到新提问之后。
+ *
+ * 异步子 Agent：主 Agent 调 start_async_task 后立即结束当轮（框架语义就是
+ * 「launch and stop」），子 Agent 在 Agent Protocol 上后台跑。由于 spec 带 url、
+ * deepagents 会丢弃父 Agent 的 assistant_id，跨 deployment 的「完成自动唤醒」
+ * 不生效，结果只能由这里轮询 /api/async-tasks/{task_id} 拿回来。
  */
 
 // ============================================================
@@ -68,26 +89,70 @@ const sessions = ref([])
 const currentThreadId = ref(null)
 // 消息列表（混合 user/assistant/tool，按时间顺序）
 const messages = ref([])
-// 是否正在流式输出
-const isStreaming = ref(false)
-// 是否正在处理中断恢复
-const isResuming = ref(false)
 // 是否显示工具调用
 const showToolCalls = ref(true)
 // 中断数据（null = 无中断，object = 有中断等待处理）
 const interruptData = ref(null)
-// AbortController 用于停止流式请求
-let abortController = null
+// 是否正在处理中断恢复
+const isResuming = ref(false)
+
+// 正在进行的 run：{ runId, threadId, controller, lastMessageId, queued }
+const runs = ref([])
+// 异步后台任务：{ task_id, agent_name, description, status, done, content, error, expanded, thread_id }
+const asyncTasks = ref([])
+// task_id → 轮询定时器
+const pollers = new Map()
+
+// 刷新前最后打开的会话（本浏览器范围内记忆，避免刷新后回到空白新对话）
+const LAST_THREAD_KEY = 'erp_last_thread_id'
+
+// 是否有回复正在生成（仅用于样式/提示，不再限制输入）
+const isStreaming = computed(() => runs.value.length > 0)
+// 正在流式输出的 run 数量
+const activeRuns = computed(() => runs.value.filter(r => !r.queued).length)
+// 在服务端排队的 run 数量
+const queuedRuns = computed(() => runs.value.filter(r => r.queued).length)
+// 面板只展示属于当前会话的异步任务
+const visibleTasks = computed(() =>
+  asyncTasks.value.filter(t => !t.thread_id || t.thread_id === currentThreadId.value)
+)
 
 // ============================================================
 // 生命周期
 // ============================================================
 
-/**
- * 组件挂载时加载会话列表
- */
 onMounted(async () => {
   await loadSessions()
+  restoreLastThread()
+})
+
+/**
+ * 刷新后回到上次打开的会话
+ *
+ * 会话本身一直有持久化（MongoDB checkpoint），但 currentThreadId 之前只存在于内存，
+ * 刷新后回到 null，看起来就像「会话没了」。这里在本浏览器记住最后打开的会话。
+ */
+function restoreLastThread() {
+  const last = localStorage.getItem(LAST_THREAD_KEY)
+  if (!last) return
+
+  currentThreadId.value = last
+  loadMessages(last)
+  loadAsyncTasks(last)
+}
+
+// currentThreadId 变化时持久化（新建对话置 null 时清除）
+watch(currentThreadId, (threadId) => {
+  if (threadId) {
+    localStorage.setItem(LAST_THREAD_KEY, threadId)
+  } else {
+    localStorage.removeItem(LAST_THREAD_KEY)
+  }
+})
+
+onBeforeUnmount(() => {
+  for (const timer of pollers.values()) clearTimeout(timer)
+  pollers.clear()
 })
 
 // ============================================================
@@ -116,18 +181,18 @@ async function handleSelectSession(threadId) {
   currentThreadId.value = threadId
   interruptData.value = null  // 切换会话时清除中断状态
   await loadMessages(threadId)
+  await loadAsyncTasks(threadId)
 }
 
 /**
  * 新建对话
  */
 function handleNewChat() {
-  // 如果有正在进行的请求，取消它
-  if (abortController) {
-    abortController.abort()
-    abortController = null
+  // 取消所有进行中的请求
+  for (const run of runs.value) {
+    run.controller?.abort()
   }
-  isStreaming.value = false
+  runs.value = []
   isResuming.value = false
   interruptData.value = null
   currentThreadId.value = null
@@ -165,20 +230,176 @@ async function loadMessages(threadId) {
 }
 
 // ============================================================
-// 停止对话
+// run 归属：把每条消息插到「它所属 run 的末尾」
 // ============================================================
 
 /**
- * 停止当前对话
+ * 生成消息 ID
  */
-function handleStop() {
-  if (abortController) {
-    abortController.abort()
-    abortController = null
-    isStreaming.value = false
-    isResuming.value = false
-    console.log('[App] 用户停止了对话')
+function newId(prefix) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * 在指定 run 的消息区尾部插入一条消息
+ *
+ * 后端虽然把同 thread 的 run 串行了，但用户可以在上一条回复结束前先提问，
+ * 此时新提问的 user 气泡已经排在后面；若仍按「尾部追加」写入，上一条回复的
+ * 后续片段就会落到新提问之后。故统一按 run 自己的 lastMessageId 定位插入点。
+ */
+function pushRunMessage(run, msg) {
+  const tagged = { ...msg, run_id: run.runId }
+  const idx = run.lastMessageId
+    ? messages.value.findIndex(m => m.id === run.lastMessageId)
+    : -1
+
+  if (idx >= 0) {
+    messages.value.splice(idx + 1, 0, tagged)
+  } else {
+    messages.value.push(tagged)
   }
+  run.lastMessageId = tagged.id
+  return tagged
+}
+
+/**
+ * 找到（或新建）该 run 当前的 assistant 气泡
+ */
+function runAssistantBubble(run, source) {
+  const current = messages.value.find(m => m.id === run.lastMessageId)
+  if (current && current.role === 'assistant') return current
+  return pushRunMessage(run, {
+    id: newId('assistant'),
+    role: 'assistant',
+    content: '',
+    source: source || 'main'
+  })
+}
+
+/**
+ * 把该 run 仍在 calling 的工具气泡标记为 done
+ */
+function finishRunTools(run) {
+  for (const m of messages.value) {
+    if (m.role === 'tool' && m.tool_status === 'calling' && m.run_id === run.runId) {
+      m.tool_status = 'done'
+    }
+  }
+}
+
+/**
+ * 清理该 run 产生的空 assistant 气泡
+ */
+function pruneRunEmptyAssistant(run) {
+  messages.value = messages.value.filter(m =>
+    !(m.role === 'assistant' && !m.content && m.run_id === run.runId)
+  )
+}
+
+// ============================================================
+// 统一回调构造（streamChat / resumeChat 共用）
+// ============================================================
+
+function buildRunCallbacks(run) {
+  return {
+    // 服务端排队（上一条还在生成）
+    onQueued: () => {
+      run.queued = true
+    },
+
+    onToken: (content, source) => {
+      run.queued = false
+      const bubble = runAssistantBubble(run, source)
+      bubble.content += content
+      bubble.source = source || bubble.source || 'main'
+    },
+
+    onToolStart: (tool) => {
+      run.queued = false
+      pushRunMessage(run, {
+        id: tool.id || newId('tool'),
+        role: 'tool',
+        tool_name: tool.name,
+        args: '',
+        text: '',
+        images: [],
+        source: tool.source || 'main',
+        tool_status: 'calling'
+      })
+    },
+
+    onToolArgs: (args) => {
+      run.queued = false
+      // 把参数片段累加到该 run 最后一个仍在 calling 的工具气泡上
+      for (let i = messages.value.length - 1; i >= 0; i--) {
+        const m = messages.value[i]
+        if (m.role === 'tool' && m.tool_status === 'calling' && m.run_id === run.runId) {
+          m.args += args
+          break
+        }
+      }
+    },
+
+    onToolResult: (tool) => {
+      const target = messages.value.find(m => m.id === tool.id && m.role === 'tool')
+      if (target) {
+        target.text = tool.text || ''
+        target.images = tool.images || []
+        target.tool_status = 'done'
+      }
+      // ★ 捕获异步子 Agent 任务并开始轮询
+      registerAsyncTask(run, tool)
+    },
+
+    onToolEnd: (tool) => {
+      if (tool) {
+        const target = messages.value.find(m => m.id === tool.id && m.role === 'tool')
+        if (target && target.tool_status === 'calling') target.tool_status = 'done'
+      }
+      finishRunTools(run)
+    },
+
+    onInterrupt: (data) => {
+      console.log('[App] 检测到中断:', data.interrupt_type)
+      finishRunTools(run)
+      pruneRunEmptyAssistant(run)
+      interruptData.value = data
+    },
+
+    onDone: (data) => {
+      finishRunTools(run)
+      pruneRunEmptyAssistant(run)
+
+      if (data.aborted) {
+        const bubble = runAssistantBubble(run, 'main')
+        if (!bubble.content) bubble.content = '（对话已停止）'
+      }
+
+      // 新会话：首轮结束后才拿到后端确认的 thread_id
+      if (data.thread_id && !currentThreadId.value && !data.interrupted) {
+        currentThreadId.value = data.thread_id
+        loadSessions()
+      }
+      if (!data.interrupted) {
+        interruptData.value = null
+      }
+    },
+
+    onError: (error) => {
+      console.error('[App] 对话错误:', error)
+      const bubble = runAssistantBubble(run, 'main')
+      bubble.content = bubble.content
+        ? `${bubble.content}\n抱歉，发生了错误：${error.message}`
+        : `抱歉，发生了错误：${error.message}`
+    }
+  }
+}
+
+/**
+ * run 结束后的收尾：从活跃列表移除
+ */
+function retireRun(run) {
+  runs.value = runs.value.filter(r => r.runId !== run.runId)
 }
 
 // ============================================================
@@ -187,186 +408,62 @@ function handleStop() {
 
 /**
  * 发送消息
+ *
+ * 不再因「上一条还在生成」而丢弃输入：后端会按 thread 排队，
+ * 前端为这条消息单独开一个 run，各自维护自己的消息区间。
  */
 async function handleSend(message) {
-  if (isStreaming.value) return
+  // 新会话必须在发送前就定下 thread_id，否则连续两条会各自生成不同 thread、
+  // 既拿不到上下文也共享不了 async_tasks 状态
+  if (!currentThreadId.value) {
+    currentThreadId.value = crypto.randomUUID()
+  }
 
-  // 添加用户消息
-  messages.value.push({
-    id: `user-${Date.now()}`,
+  const run = {
+    runId: newId('run'),
+    threadId: currentThreadId.value,
+    controller: new AbortController(),
+    lastMessageId: null,
+    queued: false
+  }
+  runs.value.push(run)
+
+  pushRunMessage(run, {
+    id: newId('user'),
     role: 'user',
     content: message
   })
 
-  // 清除中断状态（如果有）
   interruptData.value = null
 
-  // 设置流式状态
-  isStreaming.value = true
-
-  // 创建新的 AbortController
-  abortController = new AbortController()
-
   try {
-    const result = await streamChat(
+    await streamChat(
       message,
-      currentThreadId.value,
-      {
-        // 接收到 token 时的回调
-        onToken: (content, source) => {
-          const lastMsg = messages.value[messages.value.length - 1]
-          if (lastMsg && lastMsg.role === 'assistant') {
-            // 追加到已有的 assistant 消息
-            lastMsg.content += content
-            lastMsg.source = source
-          } else {
-            // 前一条是 tool 或没有消息，创建新的 assistant 消息
-            messages.value.push({
-              id: `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              role: 'assistant',
-              content: content,
-              source: source || 'main'
-            })
-          }
-        },
-
-        // 工具开始调用时的回调
-        onToolStart: (tool) => {
-          messages.value.push({
-            id: tool.id,
-            role: 'tool',
-            tool_name: tool.name,
-            args: '',
-            text: '',
-            images: [],
-            source: tool.source || 'main',
-            tool_status: 'calling'
-          })
-        },
-
-        // 工具参数片段的回调
-        onToolArgs: (args, source) => {
-          // 从后向前查找最后一个 calling 状态的 tool，支持嵌套工具调用
-          for (let i = messages.value.length - 1; i >= 0; i--) {
-            if (messages.value[i].role === 'tool' && messages.value[i].tool_status === 'calling') {
-              messages.value[i].args += args
-              break
-            }
-          }
-        },
-
-        // 工具结果返回时的回调
-        onToolResult: (tool) => {
-          let toolMsg = null
-          for (let i = messages.value.length - 1; i >= 0; i--) {
-            if (messages.value[i].role === 'tool' && messages.value[i].id === tool.id) {
-              toolMsg = messages.value[i]
-              break
-            }
-          }
-          if (toolMsg) {
-            toolMsg.text = tool.text || ''
-            toolMsg.images = tool.images || []
-            toolMsg.tool_status = 'done'
-          }
-        },
-
-        // 工具调用结束时的回调
-        onToolEnd: (tool) => {
-          if (tool) {
-            let toolMsg = null
-            for (let i = messages.value.length - 1; i >= 0; i--) {
-              if (messages.value[i].role === 'tool' && messages.value[i].id === tool.id) {
-                toolMsg = messages.value[i]
-                break
-              }
-            }
-            if (toolMsg && toolMsg.tool_status === 'calling') {
-              toolMsg.tool_status = 'done'
-            }
-          }
-          // 兜底：将所有仍在 calling 的工具标记为 done
-          for (const m of messages.value) {
-            if (m.role === 'tool' && m.tool_status === 'calling') {
-              m.tool_status = 'done'
-            }
-          }
-        },
-
-        // ★ 中断检测回调
-        onInterrupt: (data) => {
-          console.log('[App] 检测到中断:', data.interrupt_type)
-          // 兜底：将所有 calling 状态的工具标记为 done
-          for (const m of messages.value) {
-            if (m.role === 'tool' && m.tool_status === 'calling') {
-              m.tool_status = 'done'
-            }
-          }
-          // 清理空的 assistant 消息
-          messages.value = messages.value.filter(m => {
-            if (m.role === 'assistant' && !m.content) return false
-            return true
-          })
-          // 设置中断数据，触发 InterruptBanner 显示
-          interruptData.value = data
-        },
-
-        // 流结束时的回调
-        onDone: (data) => {
-          // 确保所有工具调用都标记为完成
-          for (const m of messages.value) {
-            if (m.role === 'tool' && m.tool_status === 'calling') {
-              m.tool_status = 'done'
-            }
-          }
-          // 清理空内容的 assistant 消息（流式过程中产生的残留）
-          messages.value = messages.value.filter(m => {
-            if (m.role === 'assistant' && !m.content && !data.aborted) {
-              return false
-            }
-            return true
-          })
-          if (data.aborted) {
-            const lastMsg = messages.value[messages.value.length - 1]
-            if (lastMsg && lastMsg.role === 'assistant' && !lastMsg.content) {
-              lastMsg.content = '（对话已停止）'
-            }
-          }
-          // 仅在非中断完成时更新 thread_id
-          if (data.thread_id && !currentThreadId.value && !data.interrupted) {
-            currentThreadId.value = data.thread_id
-            loadSessions()
-          }
-        },
-
-        // 发生错误时的回调
-        onError: (error) => {
-          console.error('[App] 对话错误:', error)
-          const lastMsg = messages.value[messages.value.length - 1]
-          if (lastMsg && lastMsg.role === 'assistant' && !lastMsg.content) {
-            lastMsg.content = `抱歉，发生了错误：${error.message}`
-          } else {
-            messages.value.push({
-              id: `assistant-${Date.now()}`,
-              role: 'assistant',
-              content: `抱歉，发生了错误：${error.message}`,
-              source: 'main'
-            })
-          }
-        }
-      },
-      abortController.signal
+      run.threadId,
+      buildRunCallbacks(run),
+      run.controller.signal
     )
   } catch (error) {
-    if (error.name === 'AbortError') {
-      console.log('[App] 请求已被取消')
-    } else {
+    if (error.name !== 'AbortError') {
       console.error('[App] 发送消息失败:', error)
     }
   } finally {
-    isStreaming.value = false
-    abortController = null
+    retireRun(run)
   }
+
+  loadSessions()
+}
+
+/**
+ * 停止对话：中止最近一条正在生成的回复（排队中的不动）
+ */
+function handleStop() {
+  const candidates = runs.value.filter(r => !r.queued)
+  const target = candidates[candidates.length - 1] || runs.value[runs.value.length - 1]
+  if (!target) return
+
+  target.controller?.abort()
+  console.log('[App] 用户停止了对话 run:', target.runId)
 }
 
 // ============================================================
@@ -385,142 +482,177 @@ async function handleResume(resumeData) {
 
   isResuming.value = true
 
-  // 创建新的 AbortController
-  abortController = new AbortController()
+  const run = {
+    runId: newId('resume'),
+    threadId: currentThreadId.value,
+    controller: new AbortController(),
+    lastMessageId: null,
+    queued: false
+  }
+  runs.value.push(run)
 
   try {
-    const result = await resumeChat(
-      currentThreadId.value,
+    await resumeChat(
+      run.threadId,
       resumeData,
-      {
-        onToken: (content, source) => {
-          const lastMsg = messages.value[messages.value.length - 1]
-          if (lastMsg && lastMsg.role === 'assistant') {
-            lastMsg.content += content
-            lastMsg.source = source
-          } else {
-            messages.value.push({
-              id: `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              role: 'assistant',
-              content: content,
-              source: source || 'main'
-            })
-          }
-        },
-
-        onToolStart: (tool) => {
-          messages.value.push({
-            id: tool.id,
-            role: 'tool',
-            tool_name: tool.name,
-            args: '',
-            text: '',
-            images: [],
-            source: tool.source || 'main',
-            tool_status: 'calling'
-          })
-        },
-
-        onToolArgs: (args, source) => {
-          for (let i = messages.value.length - 1; i >= 0; i--) {
-            if (messages.value[i].role === 'tool' && messages.value[i].tool_status === 'calling') {
-              messages.value[i].args += args
-              break
-            }
-          }
-        },
-
-        onToolResult: (tool) => {
-          for (let i = messages.value.length - 1; i >= 0; i--) {
-            if (messages.value[i].role === 'tool' && messages.value[i].id === tool.id) {
-              messages.value[i].text = tool.text || ''
-              messages.value[i].images = tool.images || []
-              messages.value[i].tool_status = 'done'
-              break
-            }
-          }
-        },
-
-        onToolEnd: (tool) => {
-          if (tool) {
-            for (let i = messages.value.length - 1; i >= 0; i--) {
-              if (messages.value[i].role === 'tool' && messages.value[i].id === tool.id && messages.value[i].tool_status === 'calling') {
-                messages.value[i].tool_status = 'done'
-                break
-              }
-            }
-          }
-          for (const m of messages.value) {
-            if (m.role === 'tool' && m.tool_status === 'calling') {
-              m.tool_status = 'done'
-            }
-          }
-        },
-
-        // ★ 恢复后仍可能再次中断（如：先数据补充 → 再 HITL 审批）
-        onInterrupt: (data) => {
-          console.log('[App] 恢复后再次中断:', data.interrupt_type)
-          for (const m of messages.value) {
-            if (m.role === 'tool' && m.tool_status === 'calling') {
-              m.tool_status = 'done'
-            }
-          }
-          messages.value = messages.value.filter(m => {
-            if (m.role === 'assistant' && !m.content) return false
-            return true
-          })
-          interruptData.value = data
-        },
-
-        onDone: (data) => {
-          for (const m of messages.value) {
-            if (m.role === 'tool' && m.tool_status === 'calling') {
-              m.tool_status = 'done'
-            }
-          }
-          messages.value = messages.value.filter(m => {
-            if (m.role === 'assistant' && !m.content) return false
-            return true
-          })
-          // 非中断完成 → 清除中断状态
-          if (!data.interrupted) {
-            interruptData.value = null
-            // 更新 thread_id
-            if (data.thread_id && !currentThreadId.value) {
-              currentThreadId.value = data.thread_id
-              loadSessions()
-            }
-          }
-        },
-
-        onError: (error) => {
-          console.error('[App] 恢复对话错误:', error)
-          interruptData.value = null  // 出错时清除中断状态，恢复普通输入
-          const lastMsg = messages.value[messages.value.length - 1]
-          if (lastMsg && lastMsg.role === 'assistant' && !lastMsg.content) {
-            lastMsg.content = `抱歉，发生了错误：${error.message}`
-          } else {
-            messages.value.push({
-              id: `assistant-${Date.now()}`,
-              role: 'assistant',
-              content: `抱歉，发生了错误：${error.message}`,
-              source: 'main'
-            })
-          }
-        }
-      },
-      abortController.signal
+      buildRunCallbacks(run),
+      run.controller.signal
     )
   } catch (error) {
-    if (error.name === 'AbortError') {
-      console.log('[App] 恢复请求已被取消')
-    } else {
+    if (error.name !== 'AbortError') {
       console.error('[App] 恢复请求失败:', error)
+      interruptData.value = null
     }
   } finally {
     isResuming.value = false
-    abortController = null
+    retireRun(run)
   }
+}
+
+// ============================================================
+// 异步子 Agent 后台任务
+// ============================================================
+
+/**
+ * 从 start_async_task 的工具返回中捕获 task_id 并开始轮询
+ */
+function registerAsyncTask(run, tool) {
+  const taskId = extractAsyncTaskId(tool.name, tool.text)
+  if (!taskId) return
+  if (asyncTasks.value.some(t => t.task_id === taskId)) return
+
+  // 任务描述/子 Agent 名来自工具入参（args 是逐片段累积的 JSON，可能不完整）
+  let description = ''
+  let agentName = 'async-subagent'
+  try {
+    const args = JSON.parse(tool.args || '{}')
+    description = args.description || ''
+    agentName = args.subagent_type || agentName
+  } catch {
+    // args 尚未拼完整或被截断，忽略即可
+  }
+
+  const task = {
+    task_id: taskId,
+    agent_name: agentName,
+    description,
+    status: 'running',
+    done: false,
+    content: '',
+    error: null,
+    expanded: false,
+    thread_id: run.threadId || currentThreadId.value
+  }
+  asyncTasks.value.push(task)
+  schedulePoll(task, 0)
+}
+
+/**
+ * 刷新页面 / 切换会话后，从服务端 checkpoint 恢复任务列表
+ */
+async function loadAsyncTasks(threadId) {
+  try {
+    const state = await getChatState(threadId)
+    const tasks = state.async_tasks || {}
+
+    for (const [taskId, info] of Object.entries(tasks)) {
+      if (asyncTasks.value.some(t => t.task_id === taskId)) continue
+
+      const terminal = ['success', 'error', 'interrupted', 'cancelled', 'timeout'].includes(info.status)
+      const task = {
+        task_id: taskId,
+        agent_name: info.agent_name || 'async-subagent',
+        description: '',
+        status: info.status || 'running',
+        done: terminal,
+        content: '',
+        error: null,
+        expanded: false,
+        thread_id: threadId
+      }
+      asyncTasks.value.push(task)
+      if (!terminal) schedulePoll(task, 0)
+    }
+  } catch (error) {
+    console.warn('[App] 恢复异步任务列表失败:', error)
+  }
+}
+
+/**
+ * 安排下一次轮询（4s → 8s → 15s 封顶）
+ */
+function schedulePoll(task, attempt) {
+  const delay = Math.min(4000 * Math.pow(2, attempt), 15000)
+  const timer = setTimeout(() => pollTask(task, attempt), delay)
+  pollers.set(task.task_id, timer)
+}
+
+/**
+ * 拉一次任务状态；终结后把结果写回消息流
+ */
+async function pollTask(task, attempt) {
+  try {
+    const status = await getAsyncTask(task.task_id)
+
+    task.status = status.status || task.status
+    task.error = status.error || null
+    if (status.content) task.content = status.content
+    task.done = Boolean(status.done)
+
+    if (task.done) {
+      pollers.delete(task.task_id)
+      deliverTaskResult(task)
+      return
+    }
+    schedulePoll(task, attempt + 1)
+  } catch (error) {
+    console.warn('[App] 轮询异步任务失败，稍后重试:', task.task_id, error)
+    schedulePoll(task, attempt + 1)
+  }
+}
+
+/**
+ * 任务完成 → 作为一条助手消息插入当前会话
+ *
+ * 只在任务所属会话正打开时插入，避免污染其它会话；
+ * 用户切回该会话时仍能在任务面板里看到结果。
+ */
+function deliverTaskResult(task) {
+  if (task.thread_id !== currentThreadId.value) return
+  if (messages.value.some(m => m.async_task_id === task.task_id)) return
+
+  const header = task.status === 'success'
+    ? `异步分析任务完成（${task.agent_name}）`
+    : `异步分析任务结束（${task.agent_name}，状态：${task.status}）`
+  const body = task.content || task.error || '（无输出内容）'
+
+  messages.value.push({
+    id: newId('async-result'),
+    role: 'assistant',
+    content: `**${header}**\n\n${body}`,
+    source: 'async',
+    async_task_id: task.task_id
+  })
+}
+
+/**
+ * 展开/收起任务结果
+ */
+function handleToggleTask(taskId) {
+  const task = asyncTasks.value.find(t => t.task_id === taskId)
+  if (task) task.expanded = !task.expanded
+}
+
+/**
+ * 从面板移除任务（停止轮询）
+ */
+function handleDismissTask(taskId) {
+  const timer = pollers.get(taskId)
+  if (timer) {
+    clearTimeout(timer)
+    pollers.delete(taskId)
+  }
+  asyncTasks.value = asyncTasks.value.filter(t => t.task_id !== taskId)
 }
 </script>
 

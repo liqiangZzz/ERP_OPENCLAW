@@ -15,8 +15,8 @@
         </label>
       </div>
 
-      <!-- 输入框 -->
-      <div class="input-wrapper" :class="{ focused: isFocused, streaming: streaming }">
+      <!-- 输入框：流式回复期间也允许继续输入并发送（同会话由服务端排队） -->
+      <div class="input-wrapper" :class="{ focused: isFocused, generating: streaming }">
         <textarea
           ref="textareaRef"
           v-model="inputText"
@@ -24,24 +24,23 @@
           @blur="isFocused = false"
           @keydown.enter.exact.prevent="handleSend"
           @input="autoResize"
-          placeholder="输入消息，Enter 发送..."
+          :placeholder="streaming ? '继续提问，本条会在上一条回复完成后发出…' : '输入消息，Enter 发送...'"
           rows="1"
-          :disabled="streaming"
           class="input-textarea"
         ></textarea>
-        <!-- 发送按钮：流式时变为停止按钮 -->
+        <!-- 发送按钮常驻；有回复在生成时额外显示停止按钮 -->
         <button
-          v-if="!streaming"
           class="send-btn"
           @click="handleSend"
           :disabled="!inputText.trim()"
         >
-          <span>发送</span>
+          <span>{{ streaming ? '加入队列' : '发送' }}</span>
         </button>
         <button
-          v-else
+          v-if="streaming"
           class="stop-btn"
           @click="handleStop"
+          title="停止最近一条正在生成的回复"
         >
           <span class="stop-icon">■</span>
           <span>停止</span>
@@ -50,8 +49,13 @@
 
       <!-- 提示信息 -->
       <div class="input-hint">
-        <span v-if="!streaming">按 Enter 发送，Shift + Enter 换行</span>
-        <span v-else class="streaming-hint">正在生成回复...</span>
+        <span v-if="queuedRuns > 0" class="queued-hint">
+          已有 {{ queuedRuns }} 条消息在服务端排队
+        </span>
+        <span v-else-if="streaming" class="streaming-hint">
+          正在生成回复{{ activeRuns > 1 ? `（${activeRuns} 条进行中）` : '' }}，可继续输入
+        </span>
+        <span v-else>按 Enter 发送，Shift + Enter 换行</span>
       </div>
     </div>
   </div>
@@ -64,14 +68,25 @@ import {nextTick, ref} from 'vue'
  * 输入区域组件
  *
  * 提供消息输入功能：
- * - 正常状态：显示"发送"按钮
- * - 流式输出时：输入框禁用，按钮变为"停止"
+ * - 输入框在回复生成期间保持可用，允许继续提问
+ * - 有回复在生成时额外显示「停止」按钮（停止最近一条正在生成的回复）
+ * - queuedRuns / activeRuns 仅用于提示文案，发送逻辑不受影响
  */
 
 const props = defineProps({
   streaming: {
     type: Boolean,
     default: false
+  },
+  // 正在生成回复的 run 数量
+  activeRuns: {
+    type: Number,
+    default: 0
+  },
+  // 已在服务端排队的 run 数量
+  queuedRuns: {
+    type: Number,
+    default: 0
   },
   showToolCalls: {
     type: Boolean,
@@ -207,9 +222,9 @@ function autoResize() {
   box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
 }
 
-.input-wrapper.streaming {
-  background: #fef2f2;
-  border-color: #fecaca;
+.input-wrapper.generating {
+  background: #f0f9ff;
+  border-color: #bae6fd;
 }
 
 /* 输入框 */
@@ -313,6 +328,10 @@ function autoResize() {
 .streaming-hint {
   color: #ef4444 !important;
   animation: blink 1.5s ease-in-out infinite;
+}
+
+.queued-hint {
+  color: #0ea5e9 !important;
 }
 
 @keyframes stopPulse {

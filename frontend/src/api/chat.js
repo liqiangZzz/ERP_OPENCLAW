@@ -35,6 +35,7 @@ function getUserId() {
  * @param {Function} callbacks.onToolResult - 工具结果返回时的回调 (tool: object) => void
  * @param {Function} callbacks.onToolEnd - 工具调用结束时的回调 (tool: object) => void
  * @param {Function} callbacks.onInterrupt - 检测到中断时的回调 (interruptData: object) => void
+ * @param {Function} callbacks.onQueued - 服务端排队时的回调 (data: object) => void
  * @param {Function} callbacks.onDone - 流结束时的回调 (data: object) => void
  * @param {Function} callbacks.onError - 发生错误时的回调 (error: Error) => void
  * @param {AbortSignal} signal - 可选的 AbortSignal，用于取消请求
@@ -223,6 +224,11 @@ async function _processStream(response, threadId, callbacks, fullContent, toolCa
               name: data.tool_name,
               source: data.source
             })
+            break
+
+          case 'queued':
+            // 同 thread 上一条回复仍在生成，服务端已把本条排队
+            callbacks.onQueued?.(data)
             break
 
           case 'interrupt':
