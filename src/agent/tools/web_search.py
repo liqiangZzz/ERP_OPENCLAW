@@ -10,7 +10,7 @@
 import logging
 
 from langchain_core.tools import tool
-from zai import ZhipuAiClient
+from zai import ZaiClient
 
 from agent.env_utils import ZHIPU_API_KEY
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # 初始化智谱 AI 客户端，使用环境变量中的 API Key
 # 如果 ZHIPU_API_KEY 为空，会在首次调用时报错（延迟失败）
 if ZHIPU_API_KEY:
-    client = ZhipuAiClient(api_key=ZHIPU_API_KEY)
+    client = ZaiClient(api_key=ZHIPU_API_KEY)
 else:
     client = None
     logger.warning("ZHIPU_API_KEY 未配置，web_search 工具将无法使用")
