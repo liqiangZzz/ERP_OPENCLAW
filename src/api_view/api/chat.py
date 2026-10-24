@@ -4,13 +4,15 @@
 提供流式对话接口、中断恢复接口和会话状态查询接口
 """
 
+import asyncio
 import json
 import os
 import re
 import tempfile
+import traceback
 import uuid
 from datetime import datetime
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -26,6 +28,18 @@ router = APIRouter()
 # 调试日志文件路径（在项目根目录的 temp 文件夹下）
 DEBUG_LOG_DIR = os.path.join(tempfile.gettempdir(), "deepagent_debug")
 os.makedirs(DEBUG_LOG_DIR, exist_ok=True)
+
+
+def _describe_exception(exc: BaseException) -> str:
+    """把异常转成对人类可读、且永不为空的描述。
+
+    有些异常 str() 是空串（NotImplementedError、asyncio.TimeoutError、
+    无参 ValueError 等），直接透传给前端就会出现「抱歉，发生了错误：」后面
+    什么都没有的情况，排查时只能靠 traceback。
+    """
+    text = str(exc).strip()
+    label = type(exc).__name__
+    return f"{label}: {text}" if text else label
 
 
 def get_debug_log_path(thread_id: str) -> str:
@@ -250,11 +264,11 @@ async def stream_chat_response(
         write_debug_log(
             get_debug_log_path(thread_id),
             "AGENT_INIT_ERROR",
-            {"error": str(e), "user_id": user_id},
+            {"error": _describe_exception(e), "user_id": user_id},
         )
         yield create_sse_message({
             "type": "error",
-            "message": f"Agent 初始化失败：{e}",
+            "message": f"Agent 初始化失败：{_describe_exception(e)}",
         })
         return
     collected_content = ""
@@ -582,11 +596,72 @@ async def stream_chat_response(
         })
 
     except Exception as e:
-        write_debug_log(debug_log, "STREAM_ERROR", {"error": str(e)})
+        # 完整 traceback 只进调试日志；SSE 里给「异常类型 + 消息」，避免空 message
+        write_debug_log(debug_log, "STREAM_ERROR", {
+            "error": _describe_exception(e),
+            "traceback": traceback.format_exc(),
+        })
         yield create_sse_message({
             "type": "error",
-            "message": str(e)
+            "message": _describe_exception(e)
         })
+
+
+# ============================================================
+# 同 thread 运行锁 —— 保证一个会话的 run 串行，跨会话仍可并发
+# ============================================================
+
+# thread_id → 该会话当前的运行锁 / 正在排队的流数量（引用计数，用完即回收）
+_THREAD_LOCKS: dict[str, asyncio.Lock] = {}
+_THREAD_LOCK_REFS: dict[str, int] = {}
+
+
+def _hold_thread_lock_ref(thread_id: str) -> asyncio.Lock:
+    """取得（或创建）该 thread 的运行锁，并登记一个引用。
+
+    纯同步操作、中间没有 await，因此不存在创建竞态。
+    """
+    lock = _THREAD_LOCKS.get(thread_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _THREAD_LOCKS[thread_id] = lock
+    _THREAD_LOCK_REFS[thread_id] = _THREAD_LOCK_REFS.get(thread_id, 0) + 1
+    return lock
+
+
+def _drop_thread_lock_ref(thread_id: str) -> None:
+    """释放一个引用；归零时回收锁对象，避免 dict 无界增长。"""
+    remaining = _THREAD_LOCK_REFS.get(thread_id, 0) - 1
+    if remaining > 0:
+        _THREAD_LOCK_REFS[thread_id] = remaining
+        return
+    _THREAD_LOCK_REFS.pop(thread_id, None)
+    _THREAD_LOCKS.pop(thread_id, None)
+
+
+async def _stream_with_thread_lock(thread_id: str, **kwargs: Any) -> AsyncIterator[str]:
+    """把同 thread 的 SSE 流串起来。
+
+    为什么必须串行：主 Agent 跑在 FastAPI 进程里、没有 Agent Protocol 的
+    multitask_strategy，而两个并发 run 会拿同一个 thread_id 读写同一个
+    MongoDBSaver checkpoint，导致历史分叉/丢消息。
+
+    排队中的那条流会先收到一个 queued 事件，前端据此显示“排队中”，
+    不会让人以为输入被吞掉了。
+    """
+    lock = _hold_thread_lock_ref(thread_id)
+    try:
+        if lock.locked():
+            yield create_sse_message({
+                "type": "queued",
+                "thread_id": thread_id,
+                "message": "上一条回复仍在生成中，本条已排队",
+            })
+        async with lock:
+            async for chunk in stream_chat_response(thread_id=thread_id, **kwargs):
+                yield chunk
+    finally:
+        _drop_thread_lock_ref(thread_id)
 
 
 # ============================================================
@@ -601,12 +676,17 @@ async def chat_stream(request: ChatRequest):
     接收用户消息，返回 SSE 流式响应
     支持实时显示 AI 生成的内容和工具调用信息
     检测到 Human-in-the-Loop 中断时会发送 interrupt 事件
+    同一 thread 的并发请求由服务端排队（见 _stream_with_thread_lock）
     """
     thread_id = request.thread_id or str(uuid.uuid4())
     user_id = request.user_id
 
     return StreamingResponse(
-        stream_chat_response(message=request.message, thread_id=thread_id, user_id=user_id),
+        _stream_with_thread_lock(
+            thread_id,
+            message=request.message,
+            user_id=user_id,
+        ),
         media_type="text/event-stream",  # text/json, text/html, image/jpg
         headers={
             "Cache-Control": "no-cache",
@@ -627,7 +707,11 @@ async def chat_resume(thread_id: str, request: ResumeRequest):
     - HITL 审批: {"decisions": [{"type": "approve"}]} 或 [{"type": "reject"}]
     """
     return StreamingResponse(
-        stream_chat_response(thread_id=thread_id, resume_data=request.resume, user_id=request.user_id),
+        _stream_with_thread_lock(
+            thread_id,
+            resume_data=request.resume,
+            user_id=request.user_id,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -639,7 +723,7 @@ async def chat_resume(thread_id: str, request: ResumeRequest):
 
 @router.get("/chat/{thread_id}")
 async def get_chat_state(thread_id: str):
-    """获取会话状态"""
+    """获取会话状态（含异步子 Agent 任务列表，供前端刷新后恢复）"""
     try:
         messages = await agent_loader.get_current_messages(thread_id)
 
@@ -657,7 +741,8 @@ async def get_chat_state(thread_id: str):
 
         return ChatResponse(
             thread_id=thread_id,
-            messages=message_list
+            messages=message_list,
+            async_tasks=await agent_loader.get_async_tasks(thread_id),
         )
 
     except Exception as e:
