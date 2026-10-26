@@ -1,31 +1,8 @@
-# =============================================================================
-# 运行时依赖全量 pin（direct + transitive），与 conda env ERP_OPENCLAW
-# (Python 3.11.15) 的 pip freeze 逐包对齐。pyproject.toml 用 range 风格，
-# 本文件只负责可复现。完整建环境步骤见仓库根目录 venv.txt。
-#
-# 两步安装（已用 pip install --dry-run 验证过依赖树闭合、不会改动本清单任何 pin）：
-#   pip install -r requirements.txt      # 运行时
-#   pip install -e '.[dev]'              # 项目自身 editable + mypy/ruff
-#
-# 本文件刻意不包含的东西：
-#   - 项目自身（agent/api_view/mcp_server 在 src/ 下，由 -e 安装；写进清单会把
-#     本地路径或 git URL 固化成依赖）
-#   - mypy / ruff 及其传递依赖（mypy_extensions/pathspec/ast-serialize/librt）：
-#     属于 [project.optional-dependencies].dev，当前 env 里没装，写进来等于 pin
-#     一个从未验证过的版本；由上面第二步安装后，可用
-#     `pip freeze | grep -iE "^(mypy|ruff|mypy_extensions|pathspec|ast.serialize|librt)=="`
-#     把实际版本回填到本文件末尾的 Tooling 段。
-#   - fastmcp-slim / mcp-types：环境里这两个是孤儿安装（Required-by 为空），且
-#     fastmcp-slim 4.1.3 与 fastmcp 3.2.4 争抢同一顶层包 fastmcp/（RECORD 有 460 个
-#     同名文件重叠，含 fastmcp/__init__.py）。不要装进新环境，也别裸 uninstall 其中一个。
-#
-# 保留但知情的条目：
-#   - dotenv==0.9.9：无害空壳元包，RECORD 只有 7 个 dist-info 文件、没有 dotenv/ 模块，
-#     不遮蔽 python-dotenv。保留是为了让本清单与 conda 环境逐包一致；要彻底清掉需
-#     连同环境一起卸载再重新冻结。
-#   - colorama/httptools/uvloop/watchfiles/websockets：uvicorn[standard] 的 extra 成员，
-#     显式 pin 是为了防止某次安装漏装后静默降级回纯 asyncio + h11。
-# =============================================================================
+# 全量 pin 的锁文件：`pip install -r requirements.txt` 一条命令装完运行时 + dev 工具
+# + 项目自身（见末尾 -e .）。版本与 conda env ERP_OPENCLAW (Python 3.11.15) 逐包一致。
+# 改包版本后请回写本文件，保持"清单 == 环境"。pyproject.toml 只放 range 声明。
+# 已知脏包（本清单刻意不含）：fastmcp-slim / mcp-types —— 孤儿包，且与 fastmcp 3.2.4
+# 争抢同一顶层包 fastmcp/，卸任一都会打断 MCP server，详见 venv.txt。
 
 deepagents==0.7.28
 fastapi==0.139.0
@@ -206,4 +183,15 @@ langgraph-checkpoint-redis==0.4.0
 langgraph-cli==0.4.19
 langgraph-runtime-inmem==0.27.0
 structlog==25.5.0
+
+# ---- Dev 工具（对应 pyproject [dev]，显式 pin 好让一条命令装完）----
+mypy==2.4.0
+ruff==0.17.2
+mypy_extensions==1.1.0
+pathspec==1.1.1
+ast_serialize==0.13.1
+librt==0.16.0
+
+# ---- 项目自身（editable；agent / api_view / mcp_server 在 src/ 下）----
+-e .
 

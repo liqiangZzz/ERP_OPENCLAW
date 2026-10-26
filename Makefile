@@ -7,15 +7,10 @@ all: help
 # Override per-invocation if needed:  make backend PYTHON=/path/to/python
 PYTHON ?= python
 
-# Intent-based install: resolves pyproject.toml ranges (and pulls mypy/ruff via .[dev]).
-# For a byte-exact reproducible env, use the lock FIRST, then the editable install:
-#   pip install -r requirements.txt && pip install -e '.[dev]'
-# (the second command must NOT get --no-deps: mypy needs mypy_extensions/pathspec, so
-#  --no-deps would install a broken mypy. Verified with `pip install --dry-run -e '.[dev]'`
-#  that it adds only the dev tooling and leaves every pin in requirements.txt untouched.)
-# Full procedure, prerequisites and known env pitfalls: see ./venv.txt
+# requirements.txt 是完整锁文件（运行时 + dev 工具 + 项目自身 editable），一条命令装完。
+# 前置条件、验证与已知坑见 ./venv.txt。
 install:
-	$(PYTHON) -m pip install -e '.[dev]'
+	$(PYTHON) -m pip install -r requirements.txt
 	cd frontend && npm ci
 
 check:

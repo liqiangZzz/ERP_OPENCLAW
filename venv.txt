@@ -1,149 +1,60 @@
-============================================================================
-ERP_OPENCLAW 本地环境搭建（macOS + conda）—— 完整流程，照做即可
-当前在用的环境：/opt/miniconda3/envs/ERP_OPENCLAW，Python 3.11.15
-============================================================================
+ERP_OPENCLAW 本地环境（macOS + conda，Python 3.11.15）
+=========================================================================
 
-----------------------------------------------------------------------------
-0. 前置条件（缺哪个，后面哪步就会莫名其妙失败）
-----------------------------------------------------------------------------
-- conda（本机在 /opt/miniconda3）
-- Xcode Command Line Tools：xcode-select --install
-  原因：forbiddenfruit、tavily 在 PyPI 只有 sdist，安装时要本地编译。
-- MongoDB 必须在跑。默认 mongodb://localhost:27017（由 .env 的 MONGODB_URI 决定）。
-  没起的话：会话列表空、checkpointer 报错。
-- 沙箱服务必须可达。.env 的 SANDBOX_DOMAIN，当前配置 http://192.168.0.188:8080。
-  这是内网地址，换网络/换机器就会连不上（表现为请求卡住直到超时）。
-- ERP MCP：.env 的 ERP_MCP_URL，默认 http://127.0.0.1:8000/mcp，由 start_web.py 自拉起。
-- 图表 MCP：.env 的 ANALYSIS_MCP_URL，可选；不配则启动时跳过图表工具，不影响其它功能。
-- .env 必须存在。键清单以 .env.example 为准（.env 里多出一个 SANDBOX_MODE 是死变量，
-  代码没有任何地方读它，可以删）。
-- 检查上面这些是否齐：make check PYTHON=$(which python)
+建环境（requirements.txt 是完整锁文件，一条命令装完运行时+dev工具+项目自身）
+-------------------------------------------------------------------------
+  conda create -n ERP_OPENCLAW python=3.11.15 -y     # 同名环境存在时 create 会直接报错
+  conda activate ERP_OPENCLAW
+  pip install -r requirements.txt
+  cd frontend && npm ci
+  # 已验证：pip install --dry-run --ignore-installed -r requirements.txt 解析出 180 个包，
+  # 版本与清单逐包一致（无隐式升级），含项目自身 agent 0.0.1（editable）。
 
-----------------------------------------------------------------------------
-1. 建环境
-----------------------------------------------------------------------------
-# 注意：同名环境已存在时，conda create 会直接报错退出，不会覆盖重建。
-# 想彻底重来先 conda remove -n ERP_OPENCLAW --all；
-# 更稳的做法是先建 ERP_OPENCLAW2 验证通过，再删旧的。
-conda create -n ERP_OPENCLAW python=3.11.15 -y
-conda activate ERP_OPENCLAW
+装之前要就位
+-------------------------------------------------------------------------
+  MongoDB            默认 mongodb://localhost:27017（.env 的 MONGODB_URI），不起则会话列表空
+  沙箱服务           .env 的 SANDBOX_DOMAIN（当前 http://192.168.0.188:8080，内网地址，换网即不通）
+  Xcode CLT          xcode-select --install（forbiddenfruit / tavily 只有 sdist，要本地编译）
+  .env               键清单见 .env.example；.env 里的 SANDBOX_MODE 是死变量，全仓无引用
 
-# 为什么锁补丁号：conda-meta 记录的就是 3.11.15，requirements.txt 是从它冻结出来的。
+验证
+-------------------------------------------------------------------------
+  pip check && make check PYTHON=$(which python)
+  python -c "import agent; print(agent.__file__)"          # 应指向 <repo>/src/agent/__init__.py
+  python -c "import fastmcp, zai, code_interpreter; print(fastmcp.__version__)"   # 3.2.4
 
-----------------------------------------------------------------------------
-2. 装依赖（两条命令，顺序不能反）
-----------------------------------------------------------------------------
-pip install -r requirements.txt        # 运行时：全量 pin，与 conda 实测逐包一致
-pip install -e '.[dev]'                # 项目自身(editable) + mypy/ruff/langgraph-cli 等
+启动
+-------------------------------------------------------------------------
+  python start_web.py            # 或 make mcp / make backend / make frontend
+  成功标志：MCP ready → Global sandbox ready → Agent Protocol(2024) 起来且无 GraphLoadError
 
-# 关键点：
-# * 只跑第一条不够。requirements.txt 里没有项目自身，agent/api_view/mcp_server 在
-#   src/ 下，不装第二条就 import 不到。
-# * 第二条不能加 --no-deps！mypy 需要 mypy_extensions / pathspec / ast-serialize / librt，
-#   加了 --no-deps 会装出一个 import 就坏的 mypy。
-# * 已用 `pip install --dry-run -e '.[dev]'` 验证过：它只会新增 agent-0.0.1、
-#   mypy-2.4.0、ruff-0.17.2、mypy_extensions-1.1.0、pathspec-1.1.1、ast_serialize-0.13.1、
-#   librt-0.16.0，requirements.txt 里的 pin 一个都不会被挪动。
-# * 前端另算：cd frontend && npm ci（make install 就是上面两条 + npm ci 的合体，
-#   但 make install 不装 requirements.txt，那样得到的是 range 解析结果、不是精确复现）。
+版本硬约束（别随手升）
+-------------------------------------------------------------------------
+  deepagents 0.7 移除了 backend 工厂 → create_deep_agent(backend=...) 必须传实例，不能传 callable
+  deepagents 0.7 协议改名 ls_info/glob_info/grep_raw → ls/glob/grep + delete；代理类要逐个显式实现
+      （基类这些方法是"会 raise NotImplementedError 的具体方法"，__getattr__ 兜底不生效）
+  langgraph-checkpoint 4.x 用 delta channel 存 messages → 读历史必须走状态 API，
+      直读 checkpoint["channel_values"] 会静默拿到空值；升级 langgraph-checkpoint-mongodb 无效
+      （0.5.1 仍未实现 get_delta_channel_history）
+  langchain 1.4.x 要求 langgraph>=1.2.12,<1.3；mongodb saver 0.4.x 要求 pymongo<4.17；
+      fastmcp 3.x 要求 uvicorn>=0.35
+  StoreBackend 的 namespace 必须返回 tuple[str,...]（返回 str 不报错但被逐字符拆开）；
+      user_id 只允许 [A-Za-z0-9-_.@+:~]
 
-----------------------------------------------------------------------------
-3. 验证（全绿才算装好）
-----------------------------------------------------------------------------
-pip check                                              # 必须 No broken requirements found.
-make check PYTHON=$(which python)                      # 环境变量 + MongoDB/ERP/沙箱连通性
-python -c "import agent; print(agent.__file__)"        # 应指向 <repo>/src/agent/__init__.py
-python -c "import fastmcp; print(fastmcp.__version__)" # 3.2.4
-python -c "from zai import ZaiClient; print('ok')"     # web_search 工具依赖
-python -c "import code_interpreter; print('ok')"       # tests/test_opensanbox.py 依赖
-python -c "import setuptools, grpc_tools; print(setuptools.__version__)"  # langgraph dev 要
-make test                                              # pytest 能收集到用例
+当前环境里的已知脏东西（按上面重建的新环境不会有）
+-------------------------------------------------------------------------
+  fastmcp-slim==4.1.3 + mcp-types==2.3.0：Required-by 为空的孤儿包，且 fastmcp-slim 与
+    fastmcp==3.2.4 争抢同一顶层包 fastmcp/（RECORD 460 个同名文件重叠，含 __init__.py）。
+    裸 uninstall 任一都会打断 MCP server。安全清理：
+      pip uninstall -y fastmcp fastmcp-slim mcp-types && pip install --no-deps fastmcp==3.2.4
+  dotenv==0.9.9：无害空壳（RECORD 只有 dist-info、没有 dotenv/ 模块），不遮蔽 python-dotenv
+  仓库 .venv：已废弃，别拿它当事实来源
 
-----------------------------------------------------------------------------
-4. 跑起来
-----------------------------------------------------------------------------
-python start_web.py
-# 或分开：make mcp / make backend / make frontend
-# 成功标志（按顺序出现）：
-#   [System] MCP server is ready!
-#   Global sandbox ready: <id>
-#   Agent Protocol 起来（http://127.0.0.1:2024），且日志里没有 GraphLoadError
-#   浏览器 localhost:3000 能发消息、侧栏能看到历史会话
-
-----------------------------------------------------------------------------
-5. 改过包版本之后：回写冻结（保持"清单 == 环境"这个约定不破）
-----------------------------------------------------------------------------
-pip freeze > /tmp/freeze_now.txt
-# 逐行与 requirements.txt 比对，把差异同步进清单（这是本仓库的硬约定：
-# requirements.txt = 全量 pin 的 direct+transitive freeze；pyproject.toml = range 声明）
-# 装完 .[dev] 后把 dev 工具版本记到清单末尾 Tooling 段：
-pip freeze | grep -iE "^(mypy|ruff|mypy_extensions|pathspec|ast.serialize|librt)=="
-
-----------------------------------------------------------------------------
-6. 版本之间的硬约束（别随手升这些，升了必炸）
-----------------------------------------------------------------------------
-- deepagents 0.7.x 已彻底移除 backend 工厂：create_deep_agent(backend=...) 必须传
-  BackendProtocol 实例，传 callable 会 TypeError。给工厂函数加默认参数是错误修法。
-- deepagents 0.7 协议方法改名：ls_info/glob_info/grep_raw -> ls/glob/grep，新增 delete，
-  返回值改成 LsResult/GlobResult/GrepResult/DeleteResult。自定义代理类必须逐个显式实现
-  （基类这些方法是"会 raise NotImplementedError 的具体方法"，__getattr__ 兜底不生效）。
-- langgraph-checkpoint 4.x 用 delta channel 存 messages（deepagents 声明
-  snapshot_frequency=50），所以任何直读 checkpoint["channel_values"] 的代码都会静默拿到空值，
-  必须走 LangGraph 状态 API。升级 langgraph-checkpoint-mongodb 解决不了（0.5.1 也没实现）。
-- langchain 1.4.x 要求 langgraph>=1.2.12,<1.3；
-  langgraph-checkpoint-mongodb 0.4.x 要求 pymongo<4.17；
-  fastmcp 3.x 要求 uvicorn>=0.35。这三条决定了 pyproject 里的上界，不要放开。
-- StoreBackend 的 namespace 回调必须返回 tuple[str, ...]。返回 str 不报错，但会被
-  按字符拆成多段命名空间（'liqiang-01' -> 10 段），写进去读不回来。
-- user_id 只允许 [A-Za-z0-9-_.@+:~]，含中文或 *?[]{} 会被直接拒绝（防 glob 注入，非 bug）。
-
-----------------------------------------------------------------------------
-7. 旧环境里已知的脏东西（按本文件重建的新环境不会有）
-----------------------------------------------------------------------------
-7.1 孤儿包 fastmcp-slim==4.1.3 与 mcp-types==2.3.0（Required-by 均为空）。
-    fastmcp-slim 与 fastmcp==3.2.4 争抢同一顶层包 fastmcp/：两边 RECORD 有 460 个同名
-    文件重叠（含 fastmcp/__init__.py）。裸 uninstall 任意一个都会连带删掉对方的文件、
-    直接打断 import fastmcp（MCP server 起不来）。安全清理顺序：
-      pip uninstall -y fastmcp fastmcp-slim mcp-types
-      pip install --no-deps fastmcp==3.2.4
-7.2 dotenv==0.9.9 是无害空壳元包（RECORD 只有 7 个 dist-info 文件、没有 dotenv/ 模块），
-    不遮蔽 python-dotenv。requirements.txt 里保留它只是为了与当前环境逐包一致；
-    要清掉就 pip uninstall -y dotenv 并同步删掉清单里那一行。
-7.3 仓库 .venv 已废弃，别拿它当事实来源（本文件所有命令都假定 conda activate 已完成）。
-7.4 site-packages/lib/python3.1 是个拼错的空目录残留，无功能影响，删掉即可。
-
-----------------------------------------------------------------------------
-8. 回滚
-----------------------------------------------------------------------------
-conda remove -n ERP_OPENCLAW --all
-git checkout -- requirements.txt pyproject.toml    # 依赖清单的改动都在 git 里，可退
-# 代码侧的修复（backend 协议、状态 API、运行锁）见 git log，按模块拆过提交。
-
-----------------------------------------------------------------------------
-9. 现象 -> 真因 对照表
-----------------------------------------------------------------------------
-现象：启动时 Agent Protocol 一直 "Waiting for Agent Protocol..." 到超时
-  真因：异步图导入期抛异常（GraphLoadError）。看子进程日志最后一行的 TypeError。
-  参考：backend 工厂 / _backend_factory 残留（第 6 节第 1 条）。
-
-现象：前端只显示"抱歉，发生了错误："后面什么都没有
-  真因：异常 str() 为空（NotImplementedError、asyncio.TimeoutError 这类）。
-  处置：完整 traceback 在 $TMPDIR/deepagent_debug/stream_<thread_id>_*.log 的 STREAM_ERROR。
-
-现象：请求发出去十几秒没任何输出，最后报空错误
-  真因：SkillsMiddleware 调 backend.ls -> 代理类没实现（第 7 节 7.1 同族问题）。
-
-现象：侧栏"暂无会话记录"，刷新后当前会话消失，但对话明明在继续
-  真因：读历史走了 channel_values 直读（第 6 节第 3 条）。数据都在 MongoDB 里。
-
-现象：连续问两个问题变成两条会话
-  真因：前端 thread_id 在首轮 done 后才赋值，第二条被后端另生成 uuid。
-  已修：发送前 crypto.randomUUID() 定下。
-
-现象：make lint / make format 报 No module named ruff/mypy
-  真因：没跑第 2 节的第二条命令。装上后注意 mypy 2.4 + --strict 会暴露大量历史问题，
-  那是既有代码问题，不是环境坏了。
-
-现象：pip check 干净但运行期 ImportError
-  真因：pip check 只校验声明约束，不校验"两个发行版争抢同一顶层模块"（见 7.1）。
-  排查：python -m pip show <pkg> 看 Required-by 是否为空 + 比对两边 RECORD 重叠。
+现象 → 真因
+-------------------------------------------------------------------------
+  一直 "Waiting for Agent Protocol..." 到超时   → 异步图导入期抛异常，看子进程日志的 TypeError
+  前端只有"抱歉，发生了错误："后面空白          → 异常 str() 为空；traceback 在
+                                                    $TMPDIR/deepagent_debug/stream_<thread>.log
+  侧栏"暂无会话记录"但对话能继续               → 读历史走了 channel_values 直读（数据都在库里）
+  make lint 报 No module named ruff/mypy        → 没装 dev 工具；装上后 mypy 2.4 --strict
+                                                    会暴露一批既有代码问题，那不是环境坏了

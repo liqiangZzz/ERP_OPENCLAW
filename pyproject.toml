@@ -7,10 +7,8 @@ authors = [
 ]
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.11"  # deepagents (direct) and numpy/aiofile/rpds-py (transitive) all require >=3.11
-# Floors reflect the CONDA env you actually run (deepagents 0.7.28 stack).
-# beautifulsoup4 moved to the 'scrape' extra: it is only used by the sandbox
-# web-scraper skill and is not installed in the conda host.
+requires-python = ">=3.11"  # deepagents 与 numpy/aiofile/rpds-py 均要求 >=3.11
+# range 下界对齐实际运行的 conda 环境；精确复现走 requirements.txt。
 dependencies = [
     "deepagents>=0.7.28,<0.8",
     "fastapi>=0.115,<1.1",
@@ -33,13 +31,7 @@ dependencies = [
 
 
 [project.optional-dependencies]
-# Single source of truth for dev tooling: `pip install -e '.[dev]'` (used by Makefile
-# and README). The duplicate PEP 735 [dependency-groups].dev was removed because nothing
-# referenced it (no uv.lock / `uv sync` in this repo) and it had diverged from this list.
-# Verified with `pip install --dry-run -e '.[dev]'`: it adds only the editable project
-# plus mypy/ruff and their own deps (mypy_extensions, pathspec, ast-serialize, librt) --
-# none of the runtime pins in requirements.txt get moved. Do NOT add --no-deps here:
-# mypy needs mypy_extensions/pathspec, so --no-deps would install a broken mypy.
+# dev 工具的版本同时 pin 在 requirements.txt 里，那条锁文件路径是一步装完环境的入口。
 dev = [
     "anyio>=4.7.0",
     "langgraph-cli[inmem]>=0.4.14",
@@ -47,21 +39,11 @@ dev = [
     "pytest>=9.0.3",
     "ruff>=0.8.2",
 ]
-# Sandbox code-interpreter SDK. Real consumer is tests/test_opensanbox.py, which does
-# `from code_interpreter import CodeInterpreter, SupportedLanguage`. requirements.txt
-# pins it (it is present in the conda env), but it is not required by opensandbox or any
-# other package (Required-by is empty), so without this declaration a plain
-# `pip install -e .` leaves that test failing with ImportError.
+# tests/test_opensanbox.py 需要 code_interpreter 模块，且没有任何包依赖它，必须显式声明。
 sandbox = [
     "opensandbox-code-interpreter>=0.1.2,<0.2",
 ]
-# Web-scraper skill deps — HOST-SIDE ADVISORY ONLY. Nothing installs this extra
-# automatically: the real consumer is the sandbox, which creates /opt/skills-venv and
-# runs an UNPINNED `pip install requests beautifulsoup4` at runtime
-# (src/agent/backends/global_sandbox_manager.py). scrape_page.py self-installs
-# markdownify the same way, and lxml is never installed anywhere, so _has_lxml() is
-# always False and html.parser is what actually runs. All three imports are guarded,
-# so the app starts fine without them.
+# 仅沙箱内使用（宿主不装）：由 global_sandbox_manager.py 在 /opt/skills-venv 里运行时安装。
 scrape = [
     "beautifulsoup4>=4.12,<5",
     "lxml>=4.9",
@@ -74,15 +56,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-# NOTE: src/skills/** is deliberately NOT packaged (it has no __init__.py either).
-# Skills are read from the source tree at runtime (LOCAL_SKILLS_DIR = SRC_DIR/"skills"
-# in agent/backends/global_sandbox_manager.py) and uploaded into the sandbox, so they
-# only work from a source checkout — not from an installed wheel. That is intended.
+# src/skills 与 src/download 不打包：skills 由 global_sandbox_manager.py 从源码树读取后
+# 上传进沙箱，download 是运行时产物目录。两者都不是 Python 包。
 include = ["agent*", "api_view*", "mcp_server*"]
-
-# [tool.setuptools.package-data] "*" = ["py.typed"] was removed: no py.typed marker file
-# exists in any package, so the entry packaged nothing (dead config). If you want the
-# distribution advertised as typed, add an empty src/<pkg>/py.typed first, then restore it.
 
 [tool.ruff]
 lint.select = [
