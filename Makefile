@@ -8,8 +8,12 @@ all: help
 PYTHON ?= python
 
 # Intent-based install: resolves pyproject.toml ranges (and pulls mypy/ruff via .[dev]).
-# For a byte-exact reproducible env instead, use the lock:
-#   pip install -r requirements.txt && pip install -e . --no-deps
+# For a byte-exact reproducible env, use the lock FIRST, then the editable install:
+#   pip install -r requirements.txt && pip install -e '.[dev]'
+# (the second command must NOT get --no-deps: mypy needs mypy_extensions/pathspec, so
+#  --no-deps would install a broken mypy. Verified with `pip install --dry-run -e '.[dev]'`
+#  that it adds only the dev tooling and leaves every pin in requirements.txt untouched.)
+# Full procedure, prerequisites and known env pitfalls: see ./venv.txt
 install:
 	$(PYTHON) -m pip install -e '.[dev]'
 	cd frontend && npm ci
