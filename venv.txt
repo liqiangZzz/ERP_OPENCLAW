@@ -1,60 +1,22 @@
 ERP_OPENCLAW 本地环境（macOS + conda，Python 3.11.15）
-=========================================================================
 
-建环境（requirements.txt 是完整锁文件，一条命令装完运行时+dev工具+项目自身）
--------------------------------------------------------------------------
-  conda create -n ERP_OPENCLAW python=3.11.15 -y     # 同名环境存在时 create 会直接报错
+建环境
+-----
+  conda create -n ERP_OPENCLAW python=3.11.15 -y     # 同名环境已存在时 create 会直接报错
   conda activate ERP_OPENCLAW
-  pip install -r requirements.txt
+  pip install -r requirements.txt                    # 完整锁文件：运行时 + dev + 项目自身
   cd frontend && npm ci
-  # 已验证：pip install --dry-run --ignore-installed -r requirements.txt 解析出 180 个包，
-  # 版本与清单逐包一致（无隐式升级），含项目自身 agent 0.0.1（editable）。
 
-装之前要就位
--------------------------------------------------------------------------
-  MongoDB            默认 mongodb://localhost:27017（.env 的 MONGODB_URI），不起则会话列表空
-  沙箱服务           .env 的 SANDBOX_DOMAIN（当前 http://192.168.0.188:8080，内网地址，换网即不通）
-  Xcode CLT          xcode-select --install（forbiddenfruit / tavily 只有 sdist，要本地编译）
-  .env               键清单见 .env.example；.env 里的 SANDBOX_MODE 是死变量，全仓无引用
+装之前先就位（这三样不起来自代码里看不出来，且失败是静默的）
+-----------------------------------------------------------
+  MongoDB        .env 的 MONGODB_URI，默认 mongodb://localhost:27017；不起则会话列表为空
+  沙箱服务       .env 的 SANDBOX_DOMAIN，当前 http://192.168.0.188:8080；内网地址，换网即不通
+  Xcode CLT      xcode-select --install；forbiddenfruit / tavily 只有 sdist，需要本地编译
 
-验证
--------------------------------------------------------------------------
+验证与启动
+----------
   pip check && make check PYTHON=$(which python)
-  python -c "import agent; print(agent.__file__)"          # 应指向 <repo>/src/agent/__init__.py
-  python -c "import fastmcp, zai, code_interpreter; print(fastmcp.__version__)"   # 3.2.4
+  python start_web.py                                # 或 make mcp / make backend / make frontend
 
-启动
--------------------------------------------------------------------------
-  python start_web.py            # 或 make mcp / make backend / make frontend
-  成功标志：MCP ready → Global sandbox ready → Agent Protocol(2024) 起来且无 GraphLoadError
-
-版本硬约束（别随手升）
--------------------------------------------------------------------------
-  deepagents 0.7 移除了 backend 工厂 → create_deep_agent(backend=...) 必须传实例，不能传 callable
-  deepagents 0.7 协议改名 ls_info/glob_info/grep_raw → ls/glob/grep + delete；代理类要逐个显式实现
-      （基类这些方法是"会 raise NotImplementedError 的具体方法"，__getattr__ 兜底不生效）
-  langgraph-checkpoint 4.x 用 delta channel 存 messages → 读历史必须走状态 API，
-      直读 checkpoint["channel_values"] 会静默拿到空值；升级 langgraph-checkpoint-mongodb 无效
-      （0.5.1 仍未实现 get_delta_channel_history）
-  langchain 1.4.x 要求 langgraph>=1.2.12,<1.3；mongodb saver 0.4.x 要求 pymongo<4.17；
-      fastmcp 3.x 要求 uvicorn>=0.35
-  StoreBackend 的 namespace 必须返回 tuple[str,...]（返回 str 不报错但被逐字符拆开）；
-      user_id 只允许 [A-Za-z0-9-_.@+:~]
-
-当前环境里的已知脏东西（按上面重建的新环境不会有）
--------------------------------------------------------------------------
-  fastmcp-slim==4.1.3 + mcp-types==2.3.0：Required-by 为空的孤儿包，且 fastmcp-slim 与
-    fastmcp==3.2.4 争抢同一顶层包 fastmcp/（RECORD 460 个同名文件重叠，含 __init__.py）。
-    裸 uninstall 任一都会打断 MCP server。安全清理：
-      pip uninstall -y fastmcp fastmcp-slim mcp-types && pip install --no-deps fastmcp==3.2.4
-  dotenv==0.9.9：无害空壳（RECORD 只有 dist-info、没有 dotenv/ 模块），不遮蔽 python-dotenv
-  仓库 .venv：已废弃，别拿它当事实来源
-
-现象 → 真因
--------------------------------------------------------------------------
-  一直 "Waiting for Agent Protocol..." 到超时   → 异步图导入期抛异常，看子进程日志的 TypeError
-  前端只有"抱歉，发生了错误："后面空白          → 异常 str() 为空；traceback 在
-                                                    $TMPDIR/deepagent_debug/stream_<thread>.log
-  侧栏"暂无会话记录"但对话能继续               → 读历史走了 channel_values 直读（数据都在库里）
-  make lint 报 No module named ruff/mypy        → 没装 dev 工具；装上后 mypy 2.4 --strict
-                                                    会暴露一批既有代码问题，那不是环境坏了
+版本约束、协议迁移、已知脏包、故障对照：见 git log（chore(deps)/fix(agent)/fix(backends)/
+fix(api_view) 几条提交里都写了实测依据，不在此重复）。
