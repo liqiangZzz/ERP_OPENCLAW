@@ -1,0 +1,21 @@
+# 统一环境：Multimodal_RAG（python 3.11）
+conda create -n Multimodal_RAG python=3.11 -y
+conda activate Multimodal_RAG
+pip install -r requirements.txt
+
+# 说明：
+# requirements.txt 已锁定 GME 模型所需的 HF 栈（transformers==4.51.3 / huggingface-hub==0.36.2 / tokenizers==0.21.4），
+# 与 gradio 6.27.0、langchain-experimental 0.4.2 的声明范围存在 2 处硬冲突：
+#   1) gradio 6.27.0  要求 huggingface-hub>=1.16.0，清单锁 0.36.2
+#      （且 transformers 4.51.3 自身要求 huggingface-hub<1.0，无法上调，无解）
+#   2) langchain-experimental 0.4.2 要求 langchain-community>=0.4.2，清单锁 0.4.1
+# 因此 `pip install -r requirements.txt` **一次性安装必然**报 ResolutionImpossible，请直接用两步法：
+#
+# 第一步：排除 4 个冲突包，安装其余依赖
+#   grep -v -E "^(transformers|huggingface_hub|tokenizers|langchain-community)==" requirements.txt > /tmp/req_step1.txt
+#   pip install -r /tmp/req_step1.txt
+# 第二步：强制安装 4 个锁版包
+#   pip install transformers==4.51.3 huggingface-hub==0.36.2 tokenizers==0.21.4 langchain-community==0.4.1
+#
+# 安装末尾会出现 2 条依赖告警（gradio 要求 hf-hub>=1.16、langchain-experimental 要求 community>=0.4.2），
+# 属预期现象，不影响功能。

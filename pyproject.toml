@@ -36,12 +36,24 @@ dependencies = [
 # Single source of truth for dev tooling: `pip install -e '.[dev]'` (used by Makefile
 # and README). The duplicate PEP 735 [dependency-groups].dev was removed because nothing
 # referenced it (no uv.lock / `uv sync` in this repo) and it had diverged from this list.
+# Verified with `pip install --dry-run -e '.[dev]'`: it adds only the editable project
+# plus mypy/ruff and their own deps (mypy_extensions, pathspec, ast-serialize, librt) --
+# none of the runtime pins in requirements.txt get moved. Do NOT add --no-deps here:
+# mypy needs mypy_extensions/pathspec, so --no-deps would install a broken mypy.
 dev = [
     "anyio>=4.7.0",
     "langgraph-cli[inmem]>=0.4.14",
     "mypy>=1.13.0",
     "pytest>=9.0.3",
     "ruff>=0.8.2",
+]
+# Sandbox code-interpreter SDK. Real consumer is tests/test_opensanbox.py, which does
+# `from code_interpreter import CodeInterpreter, SupportedLanguage`. requirements.txt
+# pins it (it is present in the conda env), but it is not required by opensandbox or any
+# other package (Required-by is empty), so without this declaration a plain
+# `pip install -e .` leaves that test failing with ImportError.
+sandbox = [
+    "opensandbox-code-interpreter>=0.1.2,<0.2",
 ]
 # Web-scraper skill deps — HOST-SIDE ADVISORY ONLY. Nothing installs this extra
 # automatically: the real consumer is the sandbox, which creates /opt/skills-venv and

@@ -1,3 +1,32 @@
+# =============================================================================
+# 运行时依赖全量 pin（direct + transitive），与 conda env ERP_OPENCLAW
+# (Python 3.11.15) 的 pip freeze 逐包对齐。pyproject.toml 用 range 风格，
+# 本文件只负责可复现。完整建环境步骤见仓库根目录 venv.txt。
+#
+# 两步安装（已用 pip install --dry-run 验证过依赖树闭合、不会改动本清单任何 pin）：
+#   pip install -r requirements.txt      # 运行时
+#   pip install -e '.[dev]'              # 项目自身 editable + mypy/ruff
+#
+# 本文件刻意不包含的东西：
+#   - 项目自身（agent/api_view/mcp_server 在 src/ 下，由 -e 安装；写进清单会把
+#     本地路径或 git URL 固化成依赖）
+#   - mypy / ruff 及其传递依赖（mypy_extensions/pathspec/ast-serialize/librt）：
+#     属于 [project.optional-dependencies].dev，当前 env 里没装，写进来等于 pin
+#     一个从未验证过的版本；由上面第二步安装后，可用
+#     `pip freeze | grep -iE "^(mypy|ruff|mypy_extensions|pathspec|ast.serialize|librt)=="`
+#     把实际版本回填到本文件末尾的 Tooling 段。
+#   - fastmcp-slim / mcp-types：环境里这两个是孤儿安装（Required-by 为空），且
+#     fastmcp-slim 4.1.3 与 fastmcp 3.2.4 争抢同一顶层包 fastmcp/（RECORD 有 460 个
+#     同名文件重叠，含 fastmcp/__init__.py）。不要装进新环境，也别裸 uninstall 其中一个。
+#
+# 保留但知情的条目：
+#   - dotenv==0.9.9：无害空壳元包，RECORD 只有 7 个 dist-info 文件、没有 dotenv/ 模块，
+#     不遮蔽 python-dotenv。保留是为了让本清单与 conda 环境逐包一致；要彻底清掉需
+#     连同环境一起卸载再重新冻结。
+#   - colorama/httptools/uvloop/watchfiles/websockets：uvicorn[standard] 的 extra 成员，
+#     显式 pin 是为了防止某次安装漏装后静默降级回纯 asyncio + h11。
+# =============================================================================
+
 deepagents==0.7.28
 fastapi==0.139.0
 fastmcp==3.2.4
@@ -14,7 +43,7 @@ python-dotenv==1.2.2
 PyYAML==6.0.3
 requests==2.33.0
 uvicorn[standard]==0.42.0
-zai-sdk==0.2.2
+zai-sdk==0.2.3
 
 # ---- uvicorn[standard] extra members (now installed; uvloop was missing before) ----
 #  Without these uvicorn silently falls back to the plain asyncio loop + h11 parser.
@@ -41,7 +70,7 @@ blockbuster==1.5.26
 bracex==3.1
 cachetools==7.0.5
 caio==0.9.25
-certifi==2026.2.25
+certifi==2026.10.23
 cffi==2.0.0
 charset-normalizer==3.4.6
 click==8.3.1
@@ -98,14 +127,14 @@ langgraph-sdk==0.4.8
 langsmith==0.14.11
 lark==1.3.1
 markdown-it-py==4.0.0
-mcp==1.27.0
+mcp==1.30.0
 mdurl==0.1.2
 ml_dtypes==0.5.4
 more-itertools==11.0.2
 multidict==6.7.1
 numpy==2.4.3
 openai==2.30.0
-openapi-pydantic==0.5.1
+openapi-pydantic==0.6.0
 opensandbox-code-interpreter==0.1.2
 opentelemetry-api==1.40.0
 opentelemetry-exporter-otlp-proto-common==1.40.0
@@ -135,7 +164,7 @@ pymongo-search-utils==0.3.0
 pyperclip==1.11.0
 pytest==9.1.1
 python-dateutil==2.9.0.post0
-python-multipart==0.0.22
+python-multipart==0.0.32
 python-ulid==3.1.0
 redis==7.4.0
 redisvl==0.16.0
@@ -149,7 +178,7 @@ six==1.17.0
 sniffio==1.3.1
 SQLAlchemy==2.0.51
 sse-starlette==3.3.3
-starlette==1.0.0
+starlette==1.9.0
 tavily==1.1.0
 tenacity==9.1.4
 tiktoken==0.12.0
@@ -157,7 +186,7 @@ tqdm==4.67.3
 truststore==0.10.4
 typing-inspection==0.4.2
 typing_extensions==4.15.0
-uncalled-for==0.3.1
+uncalled-for==0.4.1
 urllib3==2.6.3
 uuid_utils==0.14.1
 wcmatch==11.1
