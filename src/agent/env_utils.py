@@ -24,10 +24,7 @@ load_dotenv(override=False)
 
 DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
 GLM_API_KEY = os.getenv('GLM_API_KEY')
-QWEN_API_KEY = os.getenv('QWEN_API_KEY')
 ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
-KIMI_API_KEY = os.getenv('KIMI_API_KEY')
-
 
 # =============================================================================
 # ★ 3. 各 AI 服务商的 API Base URL
@@ -36,9 +33,6 @@ KIMI_API_KEY = os.getenv('KIMI_API_KEY')
 # ---- 各 AI 服务商的 API Base URL ----
 GLM_BASE_URL = os.getenv('GLM_BASE_URL')
 DEEPSEEK_BASE_URL = os.getenv('DEEPSEEK_BASE_URL')
-QWEN_BASE_URL = os.getenv('QWEN_BASE_URL')
-KIMI_BASE_URL = os.getenv('KIMI_BASE_URL')
-
 
 # =============================================================================
 # ★ 4. 本地服务和沙箱相关配置
@@ -74,4 +68,9 @@ MONGODB_CHECKPOINT_COLLECTION = os.getenv(
 )
 
 ERP_MCP_URL = os.getenv("ERP_MCP_URL", "http://127.0.0.1:8000/mcp")
+
+# 分析服务 MCP 地址
 ANALYSIS_MCP_URL = os.getenv("ANALYSIS_MCP_URL")
+
+# Store 持久化后端：mongo（默认，重启不丢）/ memory（InMemoryStore，仅测试用）
+STORE_BACKEND = os.getenv("STORE_BACKEND", "mongo").lower()

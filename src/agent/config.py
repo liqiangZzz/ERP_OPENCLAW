@@ -9,6 +9,8 @@ from langgraph.store.memory import InMemoryStore
 from opensandbox.config import ConnectionConfigSync
 from pymongo import MongoClient
 
+from agent.store.mongo_store import MongoDBStore
+
 from agent.env_utils import (
     DEEPSEEK_API_KEY,
     DEEPSEEK_BASE_URL,
@@ -18,7 +20,7 @@ from agent.env_utils import (
     MONGODB_DB_NAME,
     MONGODB_URI,
     OPENSANDBOX_API_KEY,
-    SANDBOX_DOMAIN, KIMI_BASE_URL, KIMI_API_KEY,
+    SANDBOX_DOMAIN, STORE_BACKEND,
 )
 
 # =============================================================================
@@ -47,21 +49,6 @@ SUMMARY_MODEL = ChatOpenAI(
     base_url=DEEPSEEK_BASE_URL,
     max_tokens=4096,  # 摘要任务输出上限，无需过大
     extra_body={"thinking": {"type": "disabled"}},
-)
-
-# ★ 备用模型（当主模型故障时使用）
-FALLBACK_MODEL = init_chat_model(
-    "glm-5.3-flash",
-    model_provider="openai",    # 如果平台兼容OpenAI接口则保留，否则需调整
-    temperature=1.0,
-    base_url=GLM_BASE_URL,
-    api_key=KIMI_API_KEY,
-    profile={
-        "max_input_tokens": 128000,
-        "max_output_tokens": 8192,
-        "tool_calling": True,
-        "structured_output": True,
-    }
 )
 
 # =============================================================================
@@ -123,15 +110,23 @@ SCOPE_MAP = {
 
 # =============================================================================
 # ★ 6. MongoDB 配置 —— 用于持久化 Agent 短期记忆/checkpoint
-# ★ 7. 持久化存储 —— InMemoryStore（开发）+ MongoDBSaver（生产）
+# ★ 7. 持久化存储 —— MongoDBStore（默认）+ InMemoryStore（测试用）
 # =============================================================================
-# ★ InMemoryStore: 开发阶段使用。生产环境替换为持久 Store。
-STORE = InMemoryStore()
+# ★ MongoDB 客户端实例（模块级私有变量，不对外导出；构造时不建连，惰性连接）
+_mongodb_client = MongoClient(MONGODB_URI)
+
+# ★ MongoDBStore: Store 数据（用户偏好/持久化技能/会话标题等）落 MongoDB，
+# 重启不丢；STORE_BACKEND=memory 时回退 InMemoryStore（仅单测/临时调试用）。
+if STORE_BACKEND == "memory":
+    STORE = InMemoryStore()
+else:
+    STORE = MongoDBStore(
+        client=_mongodb_client,
+        db_name=MONGODB_DB_NAME,
+    )
 
 # ★ MongoDBSaver: Agent 对话状态的 MongoDB 持久化 checkpointer。
 # 支持 Human-in-the-Loop（interrupt 状态持久化）和跨重启对话恢复。
-# ★ MongoDB 客户端实例（模块级私有变量，不对外导出）
-_mongodb_client = MongoClient(MONGODB_URI)
 CHECKPOINTER = MongoDBSaver(
     client=_mongodb_client,
     db_name=MONGODB_DB_NAME,
