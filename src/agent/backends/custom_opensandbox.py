@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 logger.setLevel(logging.ERROR)
 
-# 如果没有配置日志处理器，则添加一个
+# 如果没有配置日志处理器，则添加默认的 StreamHandler
 if not logger.handlers:
     handler = logging.StreamHandler()
     handler.setLevel(logging.DEBUG)
@@ -65,7 +65,7 @@ class OpenSandboxBackend(BaseSandbox):
     基于 OpenSandbox 的沙箱后端。
 
     继承 BaseSandbox 的文件操作方法，仅实现 execute、download_files 和 upload_files。
-    在执行命令时自动注入 SANDBOX_PATH 环境变量，覆盖非交互式 shell 的 PATH 限制。
+    在执行命令时自动注入 SANDBOX_PATH 环境变量，以覆盖非交互式 shell 的 PATH 限制。
     """
 
     def __init__(
@@ -76,7 +76,7 @@ class OpenSandboxBackend(BaseSandbox):
             sync_polling_interval: SyncPollingInterval = 0.1) -> None:
         """
         创建一个包装已有 OpenSandbox 沙箱后端实例
-          Args：
+        Args：
             sandbox：要包装的现有 OpenSandbox 沙盒实例。
             timeout：调用 `execute()` 且未显式指定 `timeout` 时使用的默认命令超时时间（秒）。
                 默认 3600 秒（1 小时）。
@@ -87,10 +87,10 @@ class OpenSandboxBackend(BaseSandbox):
         logger.info(f"正在初始化 OpenSandbox，沙盒 ID: {sandbox.id}")
         self._sandbox = sandbox
 
-        # sandbox.kill() 手动关闭沙箱
+        # 注意：需通过 sandbox.kill() 手动关闭沙箱
         self._default_timeout = timeout
 
-        # 处理轮训策略：若传入的是数字则包装为常量函数，否则直接使用
+        # 处理轮训策略：若传入的是数字则包装为常量函数，否则直接使用传入的函数
         if callable(sync_polling_interval):
             polling_strategy = cast("PollingStrategy", sync_polling_interval)
         else:
@@ -133,8 +133,7 @@ class OpenSandboxBackend(BaseSandbox):
 
         Args：
             command：要执行的 Shell 命令字符串。
-            timeout：等待命令完成的最大时间（秒）。
-                如果为 None，则使用后端默认的超时时间。
+            timeout：等待命令完成的最大时间（秒）。如果为 None，则使用后端默认的超时时间。
 
         Returns:
             ExecuteResponse 对象，包含标准输出、错误输出、退出码等信息。
@@ -154,7 +153,7 @@ class OpenSandboxBackend(BaseSandbox):
         """使用 OpenSandbox 的 API 执行命令。
 
         处理命令执行的完整流程：调用 OpenSandbox SDK、解析输出、处理异常。
-        超时情况下返回 exit_code=124 的标准退出码。
+        若发生超时，则返回 exit_code=124 的 Linux 标准退出码。
 
         Args:
             command: 要执行的命令（已包含 PATH 注入）。

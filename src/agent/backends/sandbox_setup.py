@@ -91,6 +91,7 @@ def setup_sandbox(config, sandbox_id=None, image=None) -> OpenSandboxBackend:
     # 预创建 skills 需要的目录，避免 Agent 运行时遇到 FileNotFoundError
     _ensure_dirs(backend)
 
+    # 上传技能文件到沙箱
     _send_files(backend)
 
     # 创建 Python venv + 预装第三方依赖
@@ -193,8 +194,9 @@ def _send_files(backend: OpenSandboxBackend) -> None:
                     if remote_content == local_content:
                         # 内容相同，无需上传
                         continue
-            except Exception:
-                pass
+            except Exception as e:
+                # 比对失败按"需要重新上传"处理，不中断初始化
+                print(f"[WARN] 沙箱文件比对失败，将重新上传: {sandbox_path} ({e})")
         to_upload.append((sandbox_path, local_content))
 
     if to_upload:

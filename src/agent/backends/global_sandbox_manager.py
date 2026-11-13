@@ -19,7 +19,7 @@ from opensandbox.config import ConnectionConfigSync
 
 from agent.backends.custom_opensandbox import OpenSandboxBackend
 from agent.backends.sandbox_proxy import SandboxBackendProxy
-from agent.env_utils import OPENSANDBOX_API_KEY
+from agent.env_utils import OPENSANDBOX_API_KEY, SANDBOX_DOMAIN
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,9 @@ SANDBOX_IMAGE = (
     "code-interpreter:v1.0.2"
 )
 
-# 沙箱连接配置
+# 沙箱连接配置（domain 读 env SANDBOX_DOMAIN，与主链路 env_utils 保持同一口径）
 SANDBOX_CONFIG = ConnectionConfigSync(
-    domain="http://192.168.0.188:8080",
+    domain=SANDBOX_DOMAIN,
     use_server_proxy=True,
     request_timeout=timedelta(seconds=60),
     transport=httpx.HTTPTransport(limits=httpx.Limits(max_connections=20)),
@@ -239,6 +239,11 @@ async def ping_global_sandbox() -> bool:
 
 
 async def recreate_global_sandbox() -> SandboxBackendProxy:
+    """
+    重新创建全局沙盒。
+
+    Returns: SandboxBackendProxy实例
+    """
     global _proxy
 
     def _recreate() -> SandboxBackendProxy:

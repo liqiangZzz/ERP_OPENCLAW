@@ -2,25 +2,24 @@
 # ★ 模块：SandboxBackendProxy — 稳定句柄，内部 backend 可热替换
 # =============================================================================
 """
-SandboxBackendProxy — 稳定句柄，内部 backend 可热替换。
+SandboxBackendProxy 是一个代理类，作为稳定的引用句柄对外暴露，内部的实际执行者
+backend 可以在运行时被热替换（如沙箱重建、环境升级），外部调用方无需感知变化。
 
-显式代理 deepagents 0.7 BackendProtocol / SandboxBackendProtocol 的全部方法
-（execute / read / write / edit / ls / glob / grep / delete / upload_files /
-download_files 及各自的 a* 异步变体）+ id property。
+【为什么必须逐个显式定义方法，而不是只靠 __getattr__？】
+协议基类（SandboxBackendProtocol）把 ls、glob、grep、delete 等实现为
+「raise NotImplementedError」的具体方法（而非 abstractmethod）。
+当外部调用时，属性查找会优先在 MRO（方法解析顺序）上命中这些基类默认实现，
+导致 __getattr__ 根本不会被触发。
+如果漏写其中一个方法，运行期就会抛出一个没有任何错误信息的空的 NotImplementedError，
+表现为前端“一直没输出”，极难排查。
+（注：这是从 deepagents 0.6 迁移到 0.7 时，ls_info/glob_info/grep_raw 改名，
+且新增 delete 后踩过的坑。）
 
-为什么必须逐个显式定义，而不是只靠 __getattr__：
-    协议基类把 ls / glob / grep / delete 等实现为「raise NotImplementedError」
-    的具体方法（不是 abstractmethod）。属性查找会先在 MRO 上命中这些基类默认实现，
-    __getattr__ 根本不会被触发 —— 漏写一个方法，运行期就得到一个空的
-    NotImplementedError（str(e) == ""），表现为前端「一直没输出」。
-    这正是 deepagents 0.6 → 0.7 迁移中 ls_info/glob_info/grep_raw 改名为
-    ls/glob/grep（返回值改为 LsResult/GlobResult/GrepResult、新增 delete）后
-    踩到的坑。
-
-使用场景:
-    当沙箱后端需要热替换（如重建、升级）时，持有 SandboxBackendProxy
-    的调用方无需感知变化，proxy 透明地将请求转发到新的 backend。
+【使用场景】
+当沙箱后端发生更新、重建时，持有 proxy 的调用方无需修改任何代码，
+proxy 会透明地将请求转发到新的 backend 实例。
 """
+
 from deepagents.backends.protocol import (
     DeleteResult,
     EditResult,
@@ -41,10 +40,9 @@ from deepagents.backends.protocol import (
 # =============================================================================
 class SandboxBackendProxy(SandboxBackendProtocol):
     """
-    代理所有 BackendProtocol 方法到内部 backend，支持热替换。
+    代理所有 BackendProtocol / SandboxBackendProtocol 的方法到内部 backend，支持热替换。
 
-    作为稳定引用持有，即使内部 backend 被 replace_backend 替换，
-    外部调用方仍然使用同一个 proxy 对象。
+    作为稳定引用持有，即使内部 backend 被 replace_backend 替换，外部调用方仍然使用同一个 proxy 对象。
     """
 
     def __init__(self, backend: SandboxBackendProtocol) -> None:
@@ -96,12 +94,12 @@ class SandboxBackendProxy(SandboxBackendProtocol):
         return self._backend.glob(pattern, path)
 
     def grep(
-        self,
-        pattern: str,
-        path: str | None = None,
-        glob: str | None = None,
-        *,
-        max_count: int | None = None,
+            self,
+            pattern: str,
+            path: str | None = None,
+            glob: str | None = None,
+            *,
+            max_count: int | None = None,
     ) -> GrepResult:
         """在文件内容中搜索字面量文本（同步）。"""
         return self._backend.grep(pattern, path, glob, max_count=max_count)
@@ -133,11 +131,11 @@ class SandboxBackendProxy(SandboxBackendProtocol):
         return await self._backend.awrite(file_path, content)
 
     async def aedit(
-        self,
-        file_path: str,
-        old_string: str,
-        new_string: str,
-        replace_all: bool = False,
+            self,
+            file_path: str,
+            old_string: str,
+            new_string: str,
+            replace_all: bool = False,
     ) -> EditResult:
         """编辑文件中的文本（异步）。"""
         return await self._backend.aedit(file_path, old_string, new_string, replace_all)
@@ -151,12 +149,12 @@ class SandboxBackendProxy(SandboxBackendProtocol):
         return await self._backend.aglob(pattern, path)
 
     async def agrep(
-        self,
-        pattern: str,
-        path: str | None = None,
-        glob: str | None = None,
-        *,
-        max_count: int | None = None,
+            self,
+            pattern: str,
+            path: str | None = None,
+            glob: str | None = None,
+            *,
+            max_count: int | None = None,
     ) -> GrepResult:
         """在文件内容中搜索字面量文本（异步）。"""
         return await self._backend.agrep(pattern, path, glob, max_count=max_count)
