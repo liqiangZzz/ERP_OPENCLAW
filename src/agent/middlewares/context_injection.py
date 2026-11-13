@@ -15,6 +15,8 @@ from typing import Dict, Any, Optional
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import SystemMessage
 
+from agent.config import SANDBOX_MEMORIES_ROOT, USER_PREFERENCES_FILENAME
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,7 +65,7 @@ class ContextInjectionMiddleware(AgentMiddleware):
             f"【系统上下文】\n"
             f"当前用户 user_id: {user_id}\n"
             f"当前用户 username: {username}\n"
-            f"用户偏好文件路径: /memories/{user_id}/preferences.md\n"
+            f"用户偏好文件路径: {SANDBOX_MEMORIES_ROOT}/{user_id}/{USER_PREFERENCES_FILENAME}\n"
             f"\n请首先使用 read_file 读取上述偏好文件了解用户偏好。"
             f"\n（recent_suppliers 和 recent_queries 由系统自动维护，你无需手动更新）"
         )

@@ -10,6 +10,7 @@ Agent 无需手动维护 recent_suppliers / recent_queries —— 系统自动�
     from agent.middlewares.memory_update import MemoryUpdateMiddleware
     middleware = MemoryUpdateMiddleware(model=SUMMARY_MODEL)
 """
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -19,11 +20,44 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
+from agent.config import SANDBOX_MEMORIES_ROOT, USER_PREFERENCES_FILENAME
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
 # ★ 1. 常量定义
 # =============================================================================
+# 新用户偏好文件骨架：字段与默认值同 AGENTS.md 规定的默认格式一致。
+# recent_* 两个区块由 _merge_preferences 统一追加，不放在骨架里。
+_DEFAULT_PREFERENCE_LINES = [
+    "preferred_output: chart",
+    "preferred_chart_type: bar",
+    "preferred_currency: CNY",
+    "preferred_language: zh",
+]
+
+# =============================================================================
+# ★ 1.1 并发控制 —— 按 user_id 隔离的回写锁
+# =============================================================================
+# 偏好文件的读-改-写不是原子操作：同一用户并发 run 同时回写时，
+# 后写会把先写整个覆盖掉（丢记忆且无报错）。
+# 这里按 user_id 加进程内 asyncio.Lock，把单进程内的回写串行化；
+# 多进程部署时需升级为 MongoDB 乐观锁（版本号）或分布式锁。
+_USER_WRITE_LOCKS: Dict[str, asyncio.Lock] = {}
+
+
+def _get_user_lock(user_id: str) -> asyncio.Lock:
+    """按 user_id 取回写锁
+
+    事件循环单线程运行，字典读写之间没有 await，setdefault 语义不会竞态。
+    锁字典随用户数增长不回收——单用户一把 asyncio.Lock 开销可忽略。
+    """
+    lock = _USER_WRITE_LOCKS.get(user_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _USER_WRITE_LOCKS[user_id] = lock
+    return lock
+
 # 触发自动更新的 ERP 业务关键词（中文）
 _TRIGGER_KEYWORDS = [
     "供应商", "物料", "采购", "订单", "价格", "分析", "对比",
@@ -301,35 +335,42 @@ class MemoryUpdateMiddleware(AgentMiddleware):
                 return None
 
             namespace = (user_id,)  # store 命名空间按用户隔离
-            key = f"/{user_id}/preferences.md"
+            key = f"{SANDBOX_MEMORIES_ROOT}/{user_id}/{USER_PREFERENCES_FILENAME}"
 
-            try:
-                item = await store.get(namespace, key)
-            except Exception:
-                logger.warning("MemoryUpdateMiddleware: 无法获取偏好文件，跳过记忆更新")
-                return None
+            # ── 步骤 6-8：读-改-写全程持用户锁，防止同用户并发回写互相覆盖 ──
+            async with _get_user_lock(str(user_id)):
+                try:
+                    item = await store.aget(namespace, key)
+                except Exception:
+                    logger.warning("MemoryUpdateMiddleware: 无法获取偏好文件，跳过记忆更新")
+                    return None
 
-            # ── 步骤 7：解析现有偏好内容（兼容 dict 和 str 两种存储格式） ──
-            current_lines: List[str] = []
-            if item is not None and hasattr(item, "value"):
-                value = item.value
-                if isinstance(value, dict):
-                    # dict 格式：content 字段为行列表或字符串
-                    content = value.get("content", [])
-                    if isinstance(content, list):
-                        current_lines = [str(line) for line in content]
-                    elif isinstance(content, str):
-                        current_lines = content.split("\n")
-                elif isinstance(value, str):
-                    # 直接存储的字符串格式
-                    current_lines = value.split("\n")
+                # ── 步骤 7：解析现有偏好内容（兼容 dict 和 str 两种存储格式） ──
+                current_lines: List[str] = []
+                if item is not None and hasattr(item, "value"):
+                    value = item.value
+                    if isinstance(value, dict):
+                        # dict 格式：content 字段为行列表或字符串
+                        content = value.get("content", [])
+                        if isinstance(content, list):
+                            current_lines = [str(line) for line in content]
+                        elif isinstance(content, str):
+                            current_lines = content.split("\n")
+                    elif isinstance(value, str):
+                        # 直接存储的字符串格式
+                        current_lines = value.split("\n")
 
-            # 合并新旧偏好数据
-            updated_content = _merge_preferences(current_lines, suppliers, query)
+                # 新用户或空文件：先落默认骨架，保证 preferred_* 字段存在，
+                # 否则 Agent 之后 edit_file 这些键会扑空
+                if not current_lines:
+                    current_lines = list(_DEFAULT_PREFERENCE_LINES)
 
-            # ── 步骤 8：写回 StoreBackend ──
-            file_value = _create_file_value(updated_content)
-            await store.aput(namespace, key, file_value)
+                # 合并新旧偏好数据
+                updated_content = _merge_preferences(current_lines, suppliers, query)
+
+                # ── 步骤 8：写回 StoreBackend ──
+                file_value = _create_file_value(updated_content)
+                await store.aput(namespace, key, file_value)
 
             logger.info(
                 f"MemoryUpdateMiddleware: 已更新 {user_id} 的记忆 "
