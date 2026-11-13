@@ -54,12 +54,15 @@ from agent.tools.hitl_tools import request_order_info
 from agent.tools.mcp_client import load_mcp_tools
 from agent.tools.web_search import web_search
 
+# 异步采购分析任务图 ID
 ASYNC_ANALYST_GRAPH_ID = "procurement_analyst_async"
+# 异步采购分析任务图 URL
 ASYNC_ANALYST_URL = os.environ.get(
     "ASYNC_AGENT_PROTOCOL_URL",
     "http://127.0.0.1:2024",
 )
 
+# 异步采购分析任务图指令
 ASYNC_ANALYST_INSTRUCTIONS = """
 ## 异步采购分析任务
 
@@ -74,12 +77,11 @@ ASYNC_ANALYST_INSTRUCTIONS = """
 """
 
 
-
 def _setup_logging() -> None:
     """根据 APP_ENV 环境变量初始化全局日志配置。
 
     生产环境写入文件（erp_agent.log），级别 INFO；
-    开发环境输出到标准输出，级别 ERROR。
+    开发环境输出到标准输出，级别 WARNING（不用 ERROR，否则中间件 except 吞掉的 warning 全被过滤，bug 静默隐形）。
     """
     env = os.environ.get("APP_ENV", "development")
     if env == "production":
@@ -92,7 +94,7 @@ def _setup_logging() -> None:
         )
     else:
         logging.basicConfig(
-            level=logging.ERROR,
+            level=logging.WARNING,
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             stream=sys.stdout,
         )
@@ -109,7 +111,7 @@ logger = logging.getLogger(__name__)
 @dataclasses.dataclass
 class PrecomputedContext:
     """
-    Phase 2/3/5 预计算结果的不可变容器。
+    Phase 0.1-0.3 预计算结果的不可变容器（启动跑一次；每请求的装配阶段见 create_main_agent 的 Phase 1-9）。
 
     仅包含不依赖 sandbox_backend 的组件（MCP 工具、图表工具、YAML 配置）
     sandbox 依赖的工具 （assign_skill\ download_sandbox_file）和 backend 依赖的中间件在 create_main_agent() 中按请求动态创建
@@ -134,7 +136,7 @@ class PrecomputedContext:
 
 async def precompute_agent_context() -> PrecomputedContext:
     """
-    Phase 2/3/5 预计算，启动时执行一次，所有请求复用。
+    Phase 0.1-0.3 预计算，启动时执行一次，所有请求复用。
 
      加载 MCP 工具、合并可视化工具、加载子 Agent YAML 配置。
     这些操作不依赖用户沙箱，结果可在所有请求间共享。
@@ -146,10 +148,10 @@ async def precompute_agent_context() -> PrecomputedContext:
         RuntimeError: 当 MCP 工具加载失败时抛出。
     """
 
-    logger.info("=== 预计算 Agent 上下文（Phase 2/3/5）===")
+    logger.info("=== 预计算 Agent 上下文（Phase 0.1-0.3）===")
 
-    # ---- Phase 2: MCP 工具加载 ----
-    logger.info("Phase 2:加载 MCP 工具...")
+    # ---- Phase 0.1: MCP 工具加载 ----
+    logger.info("Phase 0.1: 加载 MCP 工具...")
     try:
         #  加载 MCP 工具
         all_mcp_tools, analyst_mcp_tools, order_mcp_tools, chart_mcp_tools = (
@@ -159,15 +161,19 @@ async def precompute_agent_context() -> PrecomputedContext:
         logger.exception("MCP 工具加载失败")
         raise RuntimeError("MCP 工具加载失败，无法预计算")
 
-    # ---- Phase 3: 可视化工具合并（将多个图表子工具合并为一个 generate_visualization 工具）----
-    logger.info("Phase 3: 合并可视化工具 (26→1)...")
-    #
+    # ---- Phase 0.2: 可视化工具合并（将多个图表子工具合并为一个 generate_visualization 工具）----
+    logger.info("Phase 0.2: 合并可视化工具 (26→1)...")
+
+    # 将魔塔MCP中的图表子工具合并为一个 generate_visualization 工具
     generate_visualization, extra_mcp_tools = create_generate_chart_tool(chart_mcp_tools)
+
+    # 保留独立的图表子工具，extra_mcp_tools 是非可视化工具，不是 generate_ 前缀的工具，直接放入 other_tools ，不参与合并
     if extra_mcp_tools:
         logger.info(f"  保留独立工具: {[t.name for t in extra_mcp_tools]}")
 
-    # ---- Phase 5: 子 Agent YAML 配置加载 ----
-    logger.info("Phase 5: 加载子 Agent YAML 配置...")
+    # ---- Phase 0.3: 子 Agent YAML 配置加载 ----
+    logger.info("Phase 0.3: 加载子 Agent YAML 配置...")
+
     #   加载原始子代理配置
     raw_configs = load_subagent_configs()
     if not raw_configs:
@@ -177,13 +183,13 @@ async def precompute_agent_context() -> PrecomputedContext:
 
     logger.info("=== 预计算完成 ===")
     return PrecomputedContext(
-        all_mcp_tools=all_mcp_tools,
-        analyst_mcp_tools=analyst_mcp_tools,
-        order_mcp_tools=order_mcp_tools,
-        chart_mcp_tools=chart_mcp_tools,
-        extra_mcp_tools=extra_mcp_tools,
-        generate_visualization=generate_visualization,
-        raw_subagent_configs=raw_configs,
+        all_mcp_tools=all_mcp_tools,  # 所有 MCP 工具，包括可视化工具
+        analyst_mcp_tools=analyst_mcp_tools,  # 分析师 MCP 工具
+        order_mcp_tools=order_mcp_tools,  # 订单 MCP 工具
+        chart_mcp_tools=chart_mcp_tools,  # 图表 MCP 工具
+        extra_mcp_tools=extra_mcp_tools,  # 非可视化工具
+        generate_visualization=generate_visualization,  # 图表生成器
+        raw_subagent_configs=raw_configs,  # 原始子代理配置列表
     )
 
 
@@ -198,7 +204,7 @@ async def create_main_agent(
         precomputed: PrecomputedContext,
 ):
     """
-        创建 ERP 采购智能助手的 per-request agent graph factory。
+        创建 ERP 采购智能助手的 per-request agent graph factory（装配阶段 Phase 1-9）。
 
         每次请求调用，使用预计算的 MCP工具 / YAML 配置 + 外部传入的 per-user 沙箱
         轻量级创建 agent graph。SandboxBackendProxy 保证沙箱热替换不丢引用。
@@ -212,45 +218,62 @@ async def create_main_agent(
              可执行的 Agent Graph 对象（由 create_deep_agent 返回）。
     """
 
+    # =========================================================================
+    # ★ 核心架构设计（Graph Factory 模式）：
+    # 1. 无状态计算（每次重建）：每次请求都会在内存中极速组装一个全新的 Graph，
+    #    彻底杜绝多用户并发时的状态污染与数据越权。
+    # 2. 记忆不丢（状态外置）：Graph 本身不持有对话历史，所有记忆通过 Thread ID
+    #    自动从外部的 CHECKPOINTER（如 Redis）中恢复，实现逻辑计算与业务状态分离。
+    # 3. 故障无感（代理热替换）：传入的 sandbox_backend 是一个代理（Proxy），
+    #    即使底层沙箱崩溃重建，Agent Graph 持有的引用依然有效，实现无感热恢复。
+    # =========================================================================
+
     user_id = config["configurable"]["user_id"]
     logger.info("=== 为用户 %s 创建 Agent Graph ===", user_id)
 
     # ---- Phase 1: CompositeBackend 实例 ----
-    # deepagents 0.7 起移除了 backend 工厂（FilesystemMiddleware 会显式 raise TypeError），
-    # 必须直接传初始化好的 BackendProtocol 实例。StoreBackend 在运行期自己从 LangGraph
-    # 执行上下文解析 runtime（backends/store.py:_get_namespace），所以 namespace 只需
-    # 一个返回 tuple[str, ...] 的可调用对象，不再接收 runtime 形参。
-    # routes 定义路径前缀到后端的映射：/memories/ → StoreBackend（用户级隔离），
-    # /persisted-skills/ → StoreBackend（按技能命名空间组织）。
-    # 外部 sandbox_backend 是 SandboxBackendProxy（热替换不丢引用）。
+    # 【核心路由与解耦】
+    # - routes 定义虚拟文件系统的前缀路由：
+    #   /memories/ 走 StoreBackend（按用户隔离）；
+    #   /persisted-skills/ 走 StoreBackend（按技能命名空间组织）。
+    # - default=sandbox_backend 是代理对象（Proxy），即使底层沙箱热替换，引用也不会丢失。
+    #
+    # 【框架底层机制与版本适配】
+    # - deepagents 0.7 起移除 backend 工厂，必须直接传初始化好的 BackendProtocol 实例。
+    # - StoreBackend 运行期会自动从 LangGraph 执行上下文解析 runtime，
+    #   因此 namespace 只需传入一个闭包（lambda），无需接收 runtime 形参。
     backend = CompositeBackend(
         default=sandbox_backend,  # 默认沙箱后端（临时文件、代码执行等操作）
         routes={
             "/memories/": StoreBackend(
                 # 按 user_id 命名空间隔离，与 MemoryUpdateMiddleware 的 (user_id,) 保持一致；
-                # user_id 来自 config["configurable"]，per-request 闭包捕获
+                # user_id 来自 config["configurable"]，按 user_id 隔离。
+                # 这里必须用 lambda 包装（闭包），而不能直接传变量。
+                # 原因：Agent 是并发处理请求的。用 lambda 生成闭包，可以把当前请求的
+                # user_id 牢牢锁在函数内部，确保多用户同时请求时，数据绝不会串线。
+                # _rt 是底层自动传入的 runtime 参数，这里用不到，故用下划线忽略。
                 namespace=lambda _rt: (user_id,),
                 store=STORE,
             ),
             "/persisted-skills/": StoreBackend(
-                namespace=lambda _rt: SKILLS_STORE_NAMESPACE,
+                namespace=lambda _rt: SKILLS_STORE_NAMESPACE,# 持久化技能不区分用户，按全局技能命名空间组织
                 store=STORE,
             ),
         },
     )
 
-    # ---- Phase 1.4: 上传 AGENTS.md 到沙箱 ----
-    logger.info("Phase 1.4: 上传 AGENTS.md 到沙箱...")
+    # ---- Phase 2: 上传 AGENTS.md 到沙箱 ----
+    logger.info("Phase 2: 上传 AGENTS.md 到沙箱...")
     ag_md_content = LOCAL_AGENTS_MD.read_text(encoding="utf-8")
     sandbox_backend.upload_files([("/AGENTS.md", ag_md_content.encode("utf-8"))])
 
-    # ---- Phase 2/3/5: 使用预计算结果 ----
-    logger.info("Phase 2-5: 使用预计算的 MCP 工具 + 图表工具 + YAML 配置...")
+    # ---- Phase 3: 复用预计算结果（Phase 0.1-0.3 的产物）----
+    logger.info("Phase 3: 复用预计算的 MCP 工具 + 图表工具 + YAML 配置...")
     generate_visualization = precomputed.generate_visualization
     extra_mcp_tools = precomputed.extra_mcp_tools
 
-    # ---- Phase 3.6: 创建 sandbox 依赖工具（per-request）----
-    logger.info("Phase 3.6: 创建 sandbox 依赖工具...")
+    # ---- Phase 4: 创建 sandbox 依赖工具（per-request）----
+    logger.info("Phase 4: 创建 sandbox 依赖工具...")
     # 技能分配工具
     assign_skill = create_assign_skill_tool(
         sandbox_backend,
@@ -260,8 +283,9 @@ async def create_main_agent(
     # 文件下载工具
     download_sandbox_file = create_download_tool(sandbox_backend, DOWNLOAD_DIR)
 
-    # ---- Phase 4: 构建工具池 ----
-    logger.info("Phase 4: 构建工具池...")
+    # ---- Phase 5: 构建工具池 ----
+    logger.info("Phase 5: 构建工具池...")
+
     # 汇总所有可用工具：分析师 MCP 工具 + 订单 MCP 工具 + 额外 MCP 工具 +
     # 可视化工具 + 网络搜索 + 下单请求 + 技能分配 + 文件下载
     available_tools = (
@@ -275,6 +299,7 @@ async def create_main_agent(
             + [download_sandbox_file]
     )
     logger.info(f"  工具池: {len(available_tools)} 个工具")
+
     # ---- Phase 6: 子 Agent 中间件（analyst 依赖 backend）----
     logger.info("Phase 6: 创建子 Agent 中间件...")
     extra_middleware = {
@@ -286,6 +311,7 @@ async def create_main_agent(
 
     # ---- Phase 7: 子 Agent 工具解析 ----
     logger.info("Phase 7: 解析子 Agent 工具名称...")
+
     # 根据 YAML 配置将可用工具映射到子 Agent，生成子 Agent 定义列表
 
     #  同步子 Agent 配置（不包含采购分析）
@@ -293,16 +319,19 @@ async def create_main_agent(
         c for c in precomputed.raw_subagent_configs
         if c.get("name") != "procurement-analyst"
     ]
+
+    #  同步子 Agent 工具解析，根据 YAML 配置和工具池（不包含采购分析）
     sync_subagents = resolve_subagent_tools(
         sync_subagent_configs,
         available_tools,
         extra_middleware=extra_middleware,
     )
 
+    #  异步子 Agent 配置（采购分析），异步运行
     async_subagents: list[AsyncSubAgent] = [
         {
             "name": "procurement-analyst",
-             "description": (
+            "description": (
                 "耗时采购分析专家。负责供应商比价、物料行情分析、采购策略建议、"
                 "市场调研、成本评估和报告生成。后台运行，适合长任务。"
             ),
@@ -316,6 +345,7 @@ async def create_main_agent(
 
     # ---- Phase 8: 主 Agent 中间件栈 ----
     logger.info("Phase 8: 构建主 Agent 中间件栈...")
+
     # 中间件按顺序执行，每个中间件在 Agent 执行步骤的不同阶段介入
     main_middleware = [
         # 1. 沙箱健康守护：每次 agent step 前 ping → 失败自动恢复
@@ -348,7 +378,7 @@ async def create_main_agent(
     logger.info("Phase 9: 创建 Deep Agent...")
     agent_graph = create_deep_agent(
         model=MAIN_MODEL,
-        system_prompt=system_prompt+ "\n\n" + ASYNC_ANALYST_INSTRUCTIONS,
+        system_prompt=system_prompt + "\n\n" + ASYNC_ANALYST_INSTRUCTIONS,
         skills=["/skills/main/"],
         memory=[AGENTS_MD_FILENAME],
         tools=[web_search, assign_skill, download_sandbox_file],
@@ -356,7 +386,19 @@ async def create_main_agent(
         middleware=main_middleware,
         backend=backend,
         store=STORE,
+        # checkpointer 是维持多轮对话记忆的“数据库锚点”。
+        # 每次请求虽然新建了 Graph，但底层会自动依据 config 里的 thread_id
+        # 从这里读取并恢复历史上下文。
         checkpointer=CHECKPOINTER,
+        # ============================================================
+        # context_schema=ProcurementContext 的核心作用总结：
+        # 1. 强类型契约与开发体验：声明后，IDE 能完美推断出 runtime.context
+        #    是 ProcurementContext 对象，提供 ctx.user_id 等属性补全，避免拼写错误。
+        # 2. 数据安全与防篡改：Context 是贯穿整个请求生命周期的“只读环境变量”。
+        #    它与 State（对话消息历史）严格隔离，大模型无法通过生成幻觉来篡改用户身份。
+        # 3. 全链路无感穿透：不仅是主 Agent 的中间件，底层的 Tools、子 Agent
+        #    在执行时也能通过底层注入的 Runtime 安全地读取到当前用户是谁。
+        # ============================================================
         context_schema=ProcurementContext,
     )
 

@@ -95,8 +95,6 @@ class SandboxCircuitBreakerMiddleware(AgentMiddleware):
         # 注入 AIMessage 并跳转到 end 节点，终止当前 Agent 执行
         return {"jump_to": "end", "messages": [AIMessage(content=content)]}
 
-        return None
-
     # ------------------------------------------------------------------
     # ★ 异步钩子 —— 熔断检查
     # ------------------------------------------------------------------

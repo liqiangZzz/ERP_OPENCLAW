@@ -119,9 +119,12 @@ class SandboxHealthMiddleware(AgentMiddleware):
         """
 
         recovered = await recreate_global_sandbox()
+
+        # 替换代理后端
         if recovered is not self._backend:
             self._backend.replace_backend(recovered)
 
+        # 上传 AGENTS.md 文件
         await asyncio.to_thread(
             self._backend.upload_files,
             [("/AGENTS.md", self._agents_md)]

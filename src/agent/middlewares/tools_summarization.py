@@ -32,7 +32,7 @@ def build_summarization_middleware(
       压缩对话历史，释放上下文空间
 
     参数:
-        backend: 沙箱后端（用于持��化被��缩的完整对话历史）。
+        backend: 沙箱后端（用于持久化被压缩的完整对话历史）。
         model: 用于生成摘要的模型，可以是字符串标识或模型实例。
                默认为 SUMMARY_MODEL（DeepSeek-V4-Flash），也可以传入其他模型覆盖。
 
