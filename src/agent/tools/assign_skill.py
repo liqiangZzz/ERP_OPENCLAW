@@ -4,9 +4,12 @@
 将 /skills/main/ 下已验证的技能分配给指定 Agent（主 Agent 或子 Agent）。
 支持 StoreBackend 持久化 + 压缩包清理。
 """
+import logging
 from datetime import timezone, datetime
 
 from agent.config import SCOPE_MAP
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -137,7 +140,9 @@ async def _persist_skill(sandbox_backend, store, namespace, skill_name: str, sco
                 continue
             content_bytes = dl[0].content
             content_str = content_bytes.decode("utf-8") if isinstance(content_bytes, bytes) else str(content_bytes)
-        except Exception:
+        except Exception as e:
+            # 单个文件下载失败跳过持久化，其余文件继续
+            logger.warning(f"技能文件下载失败，跳过持久化: {sandbox_path} ({e})")
             continue
 
         # 写入 Store（格式与 StoreBackend 一致）

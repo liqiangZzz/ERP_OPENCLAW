@@ -18,7 +18,7 @@
     generate_visualization, other_tools = create_generate_chart_tool(chart_mcp_tools)
 """
 
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List
 
 from langchain_core.tools import tool
 
@@ -33,7 +33,8 @@ _CHART_SUFFIXES = ("_chart",)
 # _map / _diagram / _graph 后缀的工具名保留完整后缀作为 key（如 pin_map → pin_map）
 _KEEP_SUFFIXES = ("_map", "_diagram", "_graph")
 
-# chart_type → 使用场景映射（供 system_prompt 引用，共 26 种）
+# chart_type → 使用场景中文对照（26 种，纯速查文档，无代码引用；
+# 真正注入 system prompt 的是下方 _COMPACT_TABLE）
 CHART_TYPE_GUIDE: Dict[str, str] = {
     # === 标准图表（19 种）===
     "area": "数据随时间变化趋势，如库存量变化",
@@ -138,131 +139,6 @@ chart_config = {
 
 > **不确定 chart_config 的具体字段和格式时，先 `read_file("/skills/procurement/chart_params.md")` 查看完整参数说明和示例。**
 """.strip()
-
-
-# ---- 从 MCP 工具 args_schema 提取参数信息 ----
-
-def _extract_schema(tool) -> Optional[dict]:
-    """从工具提取 JSON Schema。"""
-    if not hasattr(tool, "args_schema") or not tool.args_schema:
-        return None
-    try:
-        return tool.args_schema.schema()
-    except Exception:
-        return None
-
-
-def _prop_to_md(name: str, prop: dict, required: set, indent: int = 0) -> str:
-    """将单个 JSON Schema 属性转为 Markdown 行。"""
-    prefix = "  " * indent
-    req = " **必填**" if name in required else ""
-
-    # 处理嵌套对象
-    if prop.get("type") == "object" and "properties" in prop:
-        lines = [f"{prefix}- **`{name}`** (object){req}: {prop.get('description', '')}"]
-        sub_props = prop["properties"]
-        sub_req = set(prop.get("required", []))
-        for sub_name, sub_prop in sub_props.items():
-            lines.append(_prop_to_md(sub_name, sub_prop, sub_req, indent + 1))
-        return "\n".join(lines)
-
-    # 处理数组（含 items 为对象的情况）
-    if prop.get("type") == "array" and "items" in prop:
-        items = prop["items"]
-        desc = prop.get("description", "")
-        lines = [f"{prefix}- **`{name}`** (array){req}: {desc}"]
-
-        if isinstance(items, dict) and items.get("type") == "object" and "properties" in items:
-            item_props = items["properties"]
-            item_req = set(items.get("required", []))
-            for item_name, item_prop in item_props.items():
-                lines.append(_prop_to_md(item_name, item_prop, item_req, indent + 1))
-        return "\n".join(lines)
-
-    # 简单类型
-    ptype = prop.get("type", "any")
-    if prop.get("enum"):
-        ptype = " | ".join(repr(v) for v in prop["enum"])
-    desc = prop.get("description", "")
-    return f"{prefix}- **`{name}`** ({ptype}){req}: {desc}"
-
-
-def _extract_tool_params(tool) -> str:
-    """从单个 MCP 工具的 args_schema 提取参数描述。"""
-    schema = _extract_schema(tool)
-    if not schema:
-        return "  *参数信息不可用*"
-    props = schema.get("properties", {})
-    if not props:
-        return "  *无额外参数*"
-    required = set(schema.get("required", []))
-    lines = []
-    for name, prop in props.items():
-        lines.append(_prop_to_md(name, prop, required))
-    return "\n".join(lines)
-
-
-def build_chart_params_md(tool_map: Dict[str, Any]) -> str:
-    """
-    根据 tool_map 生成完整的图表参数参考文档（Markdown 格式），
-    用于上传到沙箱 /skills/procurement/chart_params.md。
-
-    Args:
-        tool_map: chart_type → MCP StructuredTool 的映射字典
-
-    Returns:
-        Markdown 格式的完整参数参考文档
-    """
-    lines = [
-        "# 可视化图表参数参考",
-        "",
-        "本文档列出 `generate_visualization` 的所有 `chart_type` 及其 `chart_config` 参数 schema。",
-        "数据由魔塔社区 MCP Server 的 26 个可视化工具提供。",
-        "",
-        "---",
-        "",
-        "## 通用可选参数（几乎所有图表都支持）",
-        "",
-        "- **`width`** (number): 图表宽度，默认 600",
-        "- **`height`** (number): 图表高度，默认 400",
-        "- **`title`** (string): 图表标题",
-        "- **`theme`** (string): 主题，默认 'default'，可选 'academy'、'dark'",
-        "- **`style`** (object): 样式配置，通常含 `backgroundColor`、`palette`(颜色数组)、`texture`('default'|'rough'手绘风格)",
-        "- **`axisXTitle`** (string): X 轴标题（柱/线/散点等有轴图表）",
-        "- **`axisYTitle`** (string): Y 轴标题",
-        "",
-        "---",
-    ]
-
-    # 按数据模式分组
-    groups: List[Tuple[str, List[str]]] = [
-        ("category-value 模式", ["bar", "column", "pie", "funnel", "treemap", "word_cloud"]),
-        ("time-value 模式", ["line", "area"]),
-        ("分布/统计模式", ["boxplot", "violin", "histogram", "scatter"]),
-        ("多维度/流向/集合", ["radar", "sankey", "venn", "waterfall", "dual_axes"]),
-        ("层级树模式", ["organization", "mind_map", "fishbone_diagram"]),
-        ("节点-边图模式", ["flow_diagram", "network_graph"]),
-        ("特殊图表", ["liquid"]),
-        ("地图", ["district_map", "pin_map", "path_map"]),
-    ]
-
-    for group_title, chart_types in groups:
-        lines.append(f"## {group_title}")
-        lines.append("")
-        for ct in chart_types:
-            t = tool_map.get(ct)
-            if not t:
-                continue
-            usage = CHART_TYPE_GUIDE.get(ct, "")
-            params_text = _extract_tool_params(t)
-            lines.append(f"### {ct} — {usage}")
-            lines.append("")
-            lines.append(params_text)
-            lines.append("")
-            lines.append("---")
-            lines.append("")
-
-    return "\n".join(lines)
 
 
 def _build_tool_description(tool_map: Dict[str, Any]) -> str:

@@ -26,9 +26,9 @@ MCP_SERVER_CONFIG = {
         "url": ERP_MCP_URL,
         "transport": "streamable_http",
     },
-    # 魔塔社区分析 API： 提供可视化和图表生成工具
 }
 
+# 魔塔社区分析 API： 提供可视化和图表生成工具
 if ANALYSIS_MCP_URL:
     MCP_SERVER_CONFIG["analysis"] = {
         "url": ANALYSIS_MCP_URL,
