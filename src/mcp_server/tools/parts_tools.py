@@ -5,6 +5,7 @@
 """
 from typing import Optional
 
+import httpx
 from fastmcp import Context, FastMCP
 
 from mcp_server.result_utils import ensure_nonempty_content
@@ -61,19 +62,24 @@ def register_parts_tools(mcp: FastMCP):
 
             # 检查业务状态码
             if result.get("code") != 200:
-                return [f"API error: code={result.get('code')}"]
+                return [f"【业务异常】查询零部件失败，错误码：{result.get('code')}。"]
 
-            # 返回 data 字段，通常包含 records，total，current，size 等
-            return ensure_nonempty_content(result.get("data", {}).get("records", []))
+            # data 字段，通常包含 records，total，current，size 等字段
+            records = result.get("data", {}).get("records", [])
+            if not records:
+                return ["【查询成功】当前筛选条件下未找到任何零部件。建议放宽查询条件或重置页码。"]
+
+            return ensure_nonempty_content(records)
+
+        except httpx.TimeoutException:
+            return ["【网络超时】分页查询零部件超时。"]
         except Exception as e:
-            return [f'没有查询到任何信息，而且报错: {e}']
+            return [f"【未知异常】分页查询零部件报错：{str(e)}"]
 
     @mcp.tool(name=f"{GROUP_NAME}_search")
     async def search_parts(name: str, ctx: Context) -> list:
         """
-        按名称搜索零部件。
-        与 part_query 不同，此接口直接搜索，name 为必填参数。
-
+        按名称搜索零部件。 与 part_query 不同，此接口直接搜索，name 为必填参数。
         Args:
             name: 零件名称（模糊查询），必填
         """
@@ -85,10 +91,14 @@ def register_parts_tools(mcp: FastMCP):
             result = response.json()
 
             if result.get("code") != 200:
-                return [f"API error: code={result.get('code')}"]
+                return [f"【业务异常】搜索零部件失败，错误码：{result.get('code')}。"]
 
             # data 为数组
-            return ensure_nonempty_content(result.get("data", []))
+            data = result.get("data", [])
+            if not data:
+                return [f"【查询成功】未找到名称包含 '{name}' 的零部件。"]
+
+            return ensure_nonempty_content(data)
         except Exception as e:
             return [f'没有查询到任何信息，而且报错: {e}']
 
@@ -107,8 +117,12 @@ def register_parts_tools(mcp: FastMCP):
             result = response.json()
 
             if result.get("code") != 200:
-                return [f"API error: code={result.get('code')}"]
+                return [f"【业务异常】按供应商查询零部件失败，错误码：{result.get('code')}。"]
 
-            return ensure_nonempty_content(result.get("data", []))
+            data = result.get("data", [])
+            if not data:
+                return [f"【查询成功】该供应商（ID: {supplier_id}）目前没有任何采购记录的零部件。"]
+
+            return ensure_nonempty_content(data)
         except Exception as e:
             return [f'没有查询到任何信息，而且报错: {e}']

@@ -9,6 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
 
+import httpx
 from fastmcp import Context, FastMCP
 
 from mcp_server.result_utils import ensure_nonempty_content
@@ -79,7 +80,7 @@ def register_order_tools(mcp: FastMCP):
             created_by: Optional[int] = None,
             remark: Optional[str] = None,
             ctx: Context = None,
-    ) -> dict:
+    ) -> list | dict:
         """
         创建采购订单 （POST /orders/create）
 
@@ -131,12 +132,16 @@ def register_order_tools(mcp: FastMCP):
             result = response.json()
 
             if result.get("code") != 200:
-                return {
-                    "error": f"API error: code={result.get('code')}, message={result.get('message')}"
-                }
-            return result.get("data", {})
+                # 写操作失败，通常是因为参数不合法或业务校验未通过
+                return [f"【创建失败】订单创建被拒绝，错误码：{result.get('code')}，原因：{result.get('message', '未知')}。请检查参数并修改后重试。"]
+
+            data = result.get("data", {})
+            return {"status": "success", "message": "订单创建成功", "data": data}
+
+        except httpx.TimeoutException:
+            return ["【网络超时】创建订单请求超时。由于是写操作，请勿直接重试，以免造成重复下单，请先查询确认订单是否存在。"]
         except Exception as e:
-            return {"error": f"Request error: {e}"}
+            return [f"【未知异常】创建订单报错：{str(e)}。请勿重试，告知用户系统异常。"]
 
     @mcp.tool(name=f"{GROUP_NAME}_update")
     async def update_order(
@@ -151,7 +156,7 @@ def register_order_tools(mcp: FastMCP):
             created_by: Optional[int] = None,
             remark: Optional[str] = None,
             ctx: Context = None,
-    ) -> dict:
+    ) -> list | dict:
         """
         更新采购订单（PUT /orders/update/{id}）。
 
@@ -203,12 +208,14 @@ def register_order_tools(mcp: FastMCP):
             result = response.json()
 
             if result.get("code") != 200:
-                return {
-                    "error": f"API error: code={result.get('code')}, message={result.get('message')}"
-                }
-            return result.get("data", {})
+                return [f"【更新失败】订单更新被拒绝，错误码：{result.get('code')}，原因：{result.get('message', '未知')}。"]
+
+            return {"status": "success", "message": f"订单 {order_id} 更新成功", "data": result.get("data", {})}
+
+        except httpx.TimeoutException:
+            return ["【网络超时】更新订单请求超时。请勿直接重试，先查询订单状态。"]
         except Exception as e:
-            return {"error": f"Request error: {e}"}
+            return [f"【未知异常】更新订单报错：{str(e)}"]
 
     @mcp.tool(name=f"{GROUP_NAME}_search_details")
     async def search_order_details(
@@ -245,8 +252,13 @@ def register_order_tools(mcp: FastMCP):
             result = response.json()
 
             if result.get("code") != 200:
-                return [f"API error: code={result.get('code')}"]
+                return [f"【业务异常】查询订单明细失败，错误码：{result.get('code')}。"]
 
-            return ensure_nonempty_content(result.get("data", []))
+            data = result.get("data", [])
+            if not data:
+                return ["【查询成功】当前搜索条件下未找到任何订单明细记录。"]
+
+            return ensure_nonempty_content(data)
+
         except Exception as e:
-            return [f'没有查询到任何信息，而且报错: {e}']
+            return [f"【未知异常】查询订单明细报错：{str(e)}"]

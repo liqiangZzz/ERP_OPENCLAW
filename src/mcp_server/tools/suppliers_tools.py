@@ -3,6 +3,7 @@
 
 提供供应商搜索等工具，注册到 MCP Server。
 """
+import httpx
 from fastmcp import Context, FastMCP
 
 from mcp_server.result_utils import ensure_nonempty_content
@@ -21,7 +22,6 @@ def register_supplier_tools(mcp: FastMCP):
     async def query_supplier(name: str, ctx: Context):
         """
         按名称模糊搜索供应商
-
         Args:
             name: 供应商名称（模糊查询），必填
         """
@@ -34,7 +34,16 @@ def register_supplier_tools(mcp: FastMCP):
             result = response.json()
 
             if result.get("code") != 200:
-                return [f"API error: code={result.get('code')}, message={result.get('message')}"]
-            return ensure_nonempty_content(result.get("data", []))
+                return [f"【业务异常】搜索供应商失败，错误码：{result.get('code')}。"]
+            data = result.get("data", [])
+            if not data:
+                return [f"【查询成功】未找到名称包含 '{name}' 的供应商。请尝试更换关键词，或告知用户没有相关供应商。"]
+
+            return ensure_nonempty_content(data)
+
+        except httpx.TimeoutException:
+            return ["【网络超时】搜索供应商请求超时。"]
+        except httpx.ConnectError:
+            return ["【连接失败】无法连接到后端服务，请停止重试。"]
         except Exception as e:
-            return [f'没有查询到任何信息，而且报错: {e}']
+            return [f"【未知异常】搜索供应商时发生错误：{str(e)}"]
