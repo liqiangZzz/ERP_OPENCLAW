@@ -9,11 +9,15 @@ from typing import Optional, Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Query
 
+from agent.config import STORE
 from agent.scheam import SessionListResponse, Session, SessionMessagesResponse, Message, DeleteSessionResponse
 from api_view.agent_loader import agent_loader
 
 # 创建路由
 router = APIRouter()
+
+# 会话标题在 Store 中的命名空间（标题独立于 checkpoint 存储，用户改名后不丢）
+_TITLES_NAMESPACE = ("titles",)
 
 
 # ============================================================
@@ -241,6 +245,45 @@ def serialize_messages_from_checkpoint(messages: list) -> list:
 
 
 # ============================================================
+# 辅助函数：会话标题解析
+# ============================================================
+
+def derive_title_from_messages(messages: list) -> str:
+    """从首条用户消息截取 50 字符推导会话标题（无自定义标题时的回退逻辑）。"""
+    first_user_msg = next(
+        (m for m in messages if get_message_role(m) == "user"),
+        None
+    )
+    if first_user_msg:
+        first_content = get_message_content(first_user_msg)
+        title = first_content[:50] if first_content else "新对话"
+        if len(first_content) > 50:
+            title += "..."
+        return title
+    return "新对话"
+
+
+async def load_custom_titles() -> Dict[str, str]:
+    """
+    一次批量读取 Store 中所有自定义会话标题（thread_id → title）。
+
+    避免在会话列表循环里逐个 store.aget（N+1 查询）。
+    读取失败返回空字典，调用方回退为自动推导。
+    """
+    try:
+        # asearch 默认 limit=10，这里显式放大以覆盖全部标题
+        items = await STORE.asearch(_TITLES_NAMESPACE, limit=10000)
+        return {
+            item.key: str(item.value.get("title", ""))
+            for item in items
+            if isinstance(item.value, dict) and item.value.get("title")
+        }
+    except Exception as e:
+        print(f"[HistoryAPI] 批量读取会话标题失败（回退为自动推导）: {e}")
+        return {}
+
+
+# ============================================================
 # API 路由
 # ============================================================
 
@@ -253,23 +296,16 @@ async def get_sessions(
     try:
         all_thread_ids = agent_loader.get_all_thread_ids()
 
+        # 批量取自定义标题（一次查询），循环内查字典即可
+        custom_titles = await load_custom_titles()
+
         sessions = []
         for thread_id in all_thread_ids:
             try:
                 messages = await agent_loader.get_current_messages(thread_id)
 
                 if messages:
-                    first_user_msg = next(
-                        (m for m in messages if get_message_role(m) == "user"),
-                        None
-                    )
-                    if first_user_msg:
-                        first_content = get_message_content(first_user_msg)
-                        title = first_content[:50] if first_content else "新对话"
-                        if len(first_content) > 50:
-                            title += "..."
-                    else:
-                        title = "新对话"
+                    title = custom_titles.get(thread_id) or derive_title_from_messages(messages)
 
                     message_count = len(messages) // 2
                     updated_at = agent_loader.get_session_updated_at(thread_id)
@@ -356,6 +392,11 @@ async def delete_session(thread_id: str):
         success = await agent_loader.delete_session(thread_id)
 
         if success:
+            # 顺带清理 Store 中持久化的自定义标题，避免残留
+            try:
+                await STORE.adelete(_TITLES_NAMESPACE, thread_id)
+            except Exception as e:
+                print(f"[HistoryAPI] 清理会话标题失败（不影响删除结果）: {e}")
             return DeleteSessionResponse(success=True, message="会话已删除")
         else:
             return DeleteSessionResponse(success=False, message="删除会话失败")
@@ -367,10 +408,24 @@ async def delete_session(thread_id: str):
 
 @router.patch("/history/{thread_id}")
 async def update_session_title(thread_id: str, title: str = Query(..., description="新的会话标题")):
-    """更新会话标题"""
-    return {
-        "success": True,
-        "message": "标题更新功能待实现",
-        "thread_id": thread_id,
-        "title": title
-    }
+    """
+    更新会话标题
+
+    标题持久化到 Store（namespace=("titles",), key=thread_id），
+    GET /history 列表接口会优先读取这里保存的自定义标题。
+    """
+    title = title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="标题不能为空")
+
+    try:
+        await STORE.aput(_TITLES_NAMESPACE, thread_id, {"title": title})
+        return {
+            "success": True,
+            "message": "标题已更新",
+            "thread_id": thread_id,
+            "title": title
+        }
+    except Exception as e:
+        print(f"[HistoryAPI] 更新会话标题失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

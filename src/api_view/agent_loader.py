@@ -393,13 +393,9 @@ class AgentLoader:
             latest_doc = collection.find_one(
                 {"thread_id": thread_id}, sort=[("_id", -1)]
             )
-            if latest_doc:
-                if "_id" in latest_doc and hasattr(latest_doc["_id"], "generation_time"):
-                    return latest_doc["_id"].generation_time
-                elif "-id" in latest_doc:
-                    import bson
-                    if isinstance(latest_doc["_id"], bson.objectid.ObjectId):
-                        return latest_doc["_id"].generation_time
+            # ObjectId 自带 generation_time，可直接取文档创建时间
+            if latest_doc and hasattr(latest_doc.get("_id"), "generation_time"):
+                return latest_doc["_id"].generation_time
             return datetime.now()
         except Exception as e:
             print(f"[AgentLoader] 获取会话时间失败: {e}")
@@ -479,8 +475,9 @@ class AgentLoader:
             collection = db["session_display_messages"]
             try:
                 collection.create_index([("thread_id", 1), ("index", 1)])
-            except Exception:
-                pass
+            except Exception as e:
+                # 索引失败不影响删除/写入主流程（delete_many 仍可正常执行）
+                print(f"[AgentLoader] 创建索引失败（忽略）: {e}")
             collection.delete_many({"thread_id": thread_id})
             if messages:
                 now = datetime.now()
