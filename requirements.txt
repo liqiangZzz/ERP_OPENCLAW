@@ -192,6 +192,10 @@ pathspec==1.1.1
 ast_serialize==0.13.1
 librt==0.16.0
 
+# ---- 测试依赖（可选；MongoDBStore 冒烟/单测用，本机无 mongod 时替代真库）----
+# pip install mongomock
+mongomock==4.3.0
+
 # ---- 项目自身（editable；agent / api_view / mcp_server 在 src/ 下）----
 -e .
 
