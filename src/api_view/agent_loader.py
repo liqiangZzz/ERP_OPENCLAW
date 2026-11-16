@@ -67,8 +67,16 @@ class AgentLoader:
     """
     Agent 加载器单例器
 
-    复杂管理 Agent 生命周期、MongoDB 链接、沙箱管理和会话相关操作。
-    采用 Graph Factory：每次请求基于 per-user 沙箱创建 agent graph
+    负责管理基础设施生命周期（MongoDB 连接、沙箱管理器、预计算上下文）
+    与会话持久化操作。
+
+    设计要点 —— Graph Factory：
+      - agent graph 每次请求基于 per-user 沙箱现建（见 get_agent_for_user），
+        **不缓存 graph 引用** —— graph 的生命周期 = 一次请求，请求结束即可被 GC；
+      - 会话状态的持久化由 checkpointer 负责，读取统一走 _state_reader
+        （会回放 delta channel，见模块顶部说明），与具体 graph 实例无关；
+      - 因此单例上不持有 _agent 字段：单槽位缓存在多用户并发下会被互相覆盖，
+        且状态查询已完全由 _state_reader 接管，保留只会造成语义歧义。
     """
 
     # 单例实例
@@ -79,8 +87,6 @@ class AgentLoader:
     _initialized: bool = False
     # 预计算上下文（MCP 工具/YAML 配置）
     _precomputed: PrecomputedContext = None
-    # 最近创建的 agent graph 引用（用于状态查询；所有 graph 共享同一 checkpointer）
-    _agent = None
 
     # =====================================================================
     # ★ 2.1 单例构造
@@ -98,15 +104,19 @@ class AgentLoader:
     # 启动初始化
     async def initialize(self):
         """
-        启动时初始化： MongoDB + 沙箱管理器 + 预计算 + 预热沙箱
+        启动时初始化：MongoDB + 沙箱管理器 + 预计算 +（可选）预热沙箱。
 
-        预计算 （MCP 工具/YAML 配置） 执行一次，所有请求复用。
-        预热沙箱爱启动阶段完成（～15秒），首个用户连接时零等待。
+        预计算（MCP 工具 / 图表工具 / YAML 配置）只执行一次，所有请求复用。
+        沙箱预热在启动阶段完成（~15s，由 PREWARM_SANDBOX 开关控制），
+        首个用户连接时零等待。
+
+        本方法只负责搭建基础设施，**不创建 agent graph** —— graph 是 per-user 的，
+        在 get_agent_for_user() 中按需创建。因此二次调用直接返回 None（幂等）。
         """
 
         # 防重入：已初始化且预计算上下文存在时，直接返回缓存的 agent，避免重复初始化
         if self._initialized and self._precomputed is not None:
-            return self._agent
+            return True
 
         print("[AgentLoader] 开始初始化...")
 
@@ -145,7 +155,10 @@ class AgentLoader:
     # 关闭清理
     async def shutdown(self) -> None:
         """
-        应用关闭时清理所有沙箱和 MongoDB 连接
+        应用关闭时清理所有沙箱和 MongoDB 连接，并重置单例状态。
+
+        不涉及 agent graph：graph 是 per-user、随请求创建销毁的，
+        单例层面没有 graph 引用需要释放。
         """
         print("[AgentLoader] 正在关闭...")
         await sandbox_manager.shutdown(
@@ -158,25 +171,10 @@ class AgentLoader:
 
         self._initialized = False
         self._precomputed = None
-        self._agent = None
 
     # =====================================================================
-    # ★ 2.3 Agent 实例管理
+    # ★ 2.3 Agent Graph 创建（per-user）
     # =====================================================================
-
-    # 获取最近的 Agent 实例
-    @property
-    def agent(self):
-        """
-        获取最近创建的 Agent 实例（用于状态查询）
-
-        所有 agent graph 共享同一 MongoDBSaver checkpointer，
-        因此状态查询不依赖于特定用户的 graph。
-        """
-        if self._agent is None:
-            raise RuntimeError("Agent 未初始化，请先调用 initialize() 方法")
-        return self._agent
-
     # 获取 per-user agent graph
     async def get_agent_for_user(self, user_id: str):
         """
@@ -184,6 +182,10 @@ class AgentLoader:
 
         每次请求调用： 获取/创建 per-user 沙箱 → 创建 agent graph。
         同一个用户的多个 thread 共享沙箱（缓存命中 < 0.1s）
+
+        graph 本身不缓存：返回的实例仅对本次请求有效，请求结束即可被 GC。
+        会话状态由 checkpointer 持久化，读取请走 read_thread_state /
+        get_state_history / get_current_messages / get_async_tasks 这些封装方法。
 
         Args:
             user_id: 用户唯一标识
@@ -197,16 +199,12 @@ class AgentLoader:
         config = self.create_config(user_id=user_id)
         config["configurable"]["user_id"] = user_id
 
-        # 3. 创建 agent graph
-        agent_graph = await create_main_agent(
+        # 3. 创建并直接返回 agent graph（不保留引用）
+        return await create_main_agent(
             config,
             sandbox_backend=sandbox_backend,
             precomputed=self._precomputed,
         )
-
-        # 4.  保留引用用于状态查询 （所有 graph 共享同一个 chéckpointer）
-        self._agent = agent_graph
-        return agent_graph
 
     # =====================================================================
     # ★ 2.4 配置与会话
@@ -282,6 +280,9 @@ class AgentLoader:
         """
         通过只读状态图获取该会话回放后的完整状态。
 
+        这是所有会话状态查询的唯一入口，替代直接读 checkpoint["channel_values"]
+        （delta channel 存储下会拿到稀疏数据，详见模块顶部说明）。
+
         Args:
             thread_id: 会话线程 ID
 
@@ -316,7 +317,6 @@ class AgentLoader:
     # =====================================================================
     # ★ 2.5.1 异步子 Agent 任务列表
     # =====================================================================
-
     async def get_async_tasks(self, thread_id: str) -> Dict[str, Any]:
         """
         读取该会话 checkpoint 中 AsyncSubAgentMiddleware 维护的 async_tasks。
