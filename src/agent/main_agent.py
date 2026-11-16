@@ -381,8 +381,8 @@ async def create_main_agent(
         system_prompt=system_prompt + "\n\n" + ASYNC_ANALYST_INSTRUCTIONS,
         skills=["/skills/main/"],
         memory=[AGENTS_MD_FILENAME],
-        tools=[web_search, assign_skill, download_sandbox_file],
-        subagents=subagents,
+        tools=[web_search, assign_skill, download_sandbox_file], # 主 Agent 对外只暴露 3 个工具，其余全部下沉给子 Agent
+        subagents=subagents, #  子 Agent 配置（包含异步和同步子 Agent）
         middleware=main_middleware,
         backend=backend,
         store=STORE,
