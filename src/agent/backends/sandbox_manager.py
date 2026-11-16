@@ -171,7 +171,7 @@ async def ensure_sandbox_for_user(user_id: str) -> SandboxBackendProxy:
                 upsert=True
             )
             logger.info("用户 %s 认领预热沙箱: %s", user_id, sandbox_id)
-            # 异步触发后台补充：不阻塞当前用户的返回，确保响应及时
+            # 异步触发后台补充新预热池沙箱：不阻塞当前用户的返回，确保响应及时
             try:
                 asyncio.create_task(_replenish_warm())
             except Exception as e:
